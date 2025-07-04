@@ -8,7 +8,9 @@ This project implements a 3-DOF robot simulation with real-time visualization, j
 .
 ├── scripts/
 │   ├── test_robot.py         # Main simulation script
-│   └── plot_robot_data.py    # Data visualization script
+│   ├── plot_robot_data.py    # Data visualization script
+│   ├── inverse_kinematics.py # Inverse kinematics module
+│   └── test_inverse_kinematics.py # IK testing script
 ├── urdf/
 │   ├── robot.urdf           # Compiled URDF file
 │   ├── robot.urdf.xacro    # Main robot description
@@ -36,12 +38,54 @@ The robot is a 3-DOF manipulator with the following features:
 - Visual materials for better appearance
 - Properly defined inertial properties
 
+## Robot Visualization
+
+Here are the visual representations of the robot's components and assembly:
+
+### Base Structure
+![Robot Base](images/base.png)
+*The base structure of the robot*
+
+### Links and Joints Configuration
+![Links and Joints](images/links_and_joints.png)
+*Detailed view of the robot's links and joints arrangement*
+
+### Collision Model
+![Collision Model](images/collision.png)
+*The collision model used for physics simulation*
+
+### Complete Robot Assembly
+![Complete Robot](images/complete_robot.png)
+*The fully assembled 3-DOF robot*
+
+### Detailed Robot Structure
+
+#### Links Specification
+
+| Link Name | Geometry | Dimensions | Mass |
+|-----------|----------|------------|------|
+| Base Link | Box | 0.2 x 0.2 x 0.02m | 2.0 kg |
+| Link 1 | Cylinder | r: 0.024m, l: 0.25m | 0.8 kg |
+| Link 2 | Cylinder | r: 0.020m, l: 0.15m | 0.6 kg |
+| Link 3 | Cylinder | r: 0.020m, l: 0.15m | 0.4 kg |
+| Link 4 | Cylinder | r: 0.015m, l: 0.10m | 0.3 kg |
+| Gripper | Box | Base: 0.04 x 0.03 x 0.02m<br>Fingers: 2x (0.01 x 0.015 x 0.05m) | - |
+
+#### Joints Configuration
+
+| Joint Name | Type | Connection | Additional Info |
+|------------|------|------------|-----------------|
+| world_to_base | Fixed | world → base_link | Position: Origin (0, 0, 0) |
+| base_to_link_1 | Fixed | base_link → link_1 | Position: z = 0.02m |
+| link_1_to_link_2 | Revolute | link_1 → link_2 | Axis: Y, Limits: ±90° |
+| link_2_to_link_3 | Revolute | link_2 → link_3 | Axis: Y, Limits: ±90° |
+| link_3_to_link_4 | Revolute | link_3 → link_4 | Axis: Y, Limits: ±90° |
+| link_4_to_gripper | Revolute | link_4 → gripper | Axis: Y, Limits: ±90° |
+
 ### URDF Structure
 - Base link with fixed joint to world
 - 4 links connected by revolute joints
 - Joint limits: ±1.57 radians (±90 degrees)
-- Maximum joint torque: 50 Nm
-- Maximum joint velocity: 1.0 rad/s
 
 ## Main Components
 
@@ -219,6 +263,90 @@ positions = [
 - End-effector position and orientation
 - Joint torques
 - Real-time data flushing for safety
+
+## Inverse Kinematics Module
+
+The project includes a comprehensive inverse kinematics (IK) solution for the 3-DOF robotic arm. The IK module provides functions to calculate joint angles for desired end-effector positions and analyze the robot's workspace.
+
+### Key Components
+
+1. **Inverse Kinematics Function**
+   ```python
+   theta1, theta2, theta3 = inverse_kinematics(x, z, l1, l2, l3, z_offset)
+   ```
+   - Calculates joint angles for a target (x,z) position
+   - Takes into account link lengths and base offset
+   - Handles joint limits (±90 degrees)
+   - Raises ValueError if position is unreachable
+
+2. **Workspace Analysis**
+   ```python
+   bounds = get_workspace_bounds(l1, l2, l3, z_offset)
+   ```
+   - Calculates reachable workspace boundaries
+   - Returns min/max x and z coordinates
+   - Considers joint limits and link lengths
+   - Useful for planning and validation
+
+3. **Forward Kinematics**
+   ```python
+   x, z = forward_kinematics(theta1, theta2, theta3, l1, l2, l3, z_offset)
+   ```
+   - Verifies IK solutions
+   - Calculates end-effector position from joint angles
+   - Used for validation and testing
+
+### Testing and Validation
+
+The `test_inverse_kinematics.py` script provides:
+1. Visual workspace plotting
+2. Test points throughout workspace
+3. Real-time PyBullet simulation
+4. Position error analysis
+5. Forward kinematics verification
+
+### Usage Example
+
+```python
+from inverse_kinematics import inverse_kinematics, get_workspace_bounds
+
+# Robot parameters
+l1, l2, l3 = 0.25, 0.15, 0.15  # Link lengths
+z_offset = 0.02  # Base offset
+
+# Check workspace
+bounds = get_workspace_bounds(l1, l2, l3, z_offset)
+print(f"Workspace bounds: {bounds}")
+
+# Calculate inverse kinematics
+try:
+    theta1, theta2, theta3 = inverse_kinematics(0.2, 0.4, l1, l2, l3, z_offset)
+    print(f"Joint angles: {np.degrees([theta1, theta2, theta3])} degrees")
+except ValueError as e:
+    print(f"Position unreachable: {e}")
+```
+
+### Implementation Details
+
+1. **Geometric Approach**
+   - Uses analytical solution for 3-DOF planar arm
+   - Employs cosine law for angle calculations
+   - Maintains end-effector vertical orientation
+
+2. **Joint Limits**
+   - Enforces ±90 degree limits per joint
+   - Validates solutions before returning
+   - Handles edge cases and singularities
+
+3. **Workspace Analysis**
+   - Calculates maximum reach: l1 + l2 + l3
+   - Determines minimum reach based on joint limits
+   - Maps reachable workspace boundaries
+
+4. **Error Handling**
+   - Validates input coordinates
+   - Checks joint limit violations
+   - Provides meaningful error messages
 
 ### 2. Data Visualization (`scripts/plot_robot_data.py`)
 
