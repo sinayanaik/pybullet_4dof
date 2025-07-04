@@ -1,5 +1,30 @@
 # Robot Simulation and Analysis Project
 
+## Table of Contents
+1. [Overview](#overview)
+2. [Project Structure](#project-structure)
+3. [Dependencies](#dependencies)
+4. [Robot Description](#robot-description)
+   - [Visual Components](#visual-components)
+   - [Detailed Robot Structure](#detailed-robot-structure)
+   - [URDF Structure](#urdf-structure)
+5. [URDF Generation](#urdf-generation)
+   - [XACRO Files](#xacro-files)
+   - [Generating URDF](#generating-urdf)
+6. [Main Components](#main-components)
+   - [Robot Simulation](#1-robot-simulation-scriptstest_robotpy)
+   - [Data Visualization](#2-data-visualization-scriptsplot_robot_datapy)
+7. [Control Strategy Details](#control-strategy-details)
+8. [Inverse Kinematics Module](#inverse-kinematics-module)
+9. [Usage Guide](#usage-guide)
+10. [Customization Options](#customization-options)
+11. [Common Issues and Solutions](#common-issues-and-solutions)
+12. [Future Improvements](#future-improvements)
+13. [Contributing](#contributing)
+14. [License](#license)
+
+## Overview
+
 This project implements a 3-DOF robot simulation with real-time visualization, joint control, and data analysis capabilities using PyBullet. The project focuses on simulating robot dynamics, tracking end-effector positions, and analyzing joint torques.
 
 ## Project Structure
@@ -28,33 +53,32 @@ This project implements a 3-DOF robot simulation with real-time visualization, j
 - NumPy (`pip install numpy`)
 - Pandas (`pip install pandas`)
 - Matplotlib (`pip install matplotlib`)
+- ROS XACRO (`sudo apt install ros-*-xacro`) - For URDF generation
 
 ## Robot Description
 
 The robot is a 3-DOF manipulator with the following features:
 - Fixed base
-- 4 revolute joints
+- 4 revolute joints with full 360° rotation capability
 - Gripper end-effector
 - Visual materials for better appearance
 - Properly defined inertial properties
 
-## Robot Visualization
+### Visual Components
 
-Here are the visual representations of the robot's components and assembly:
-
-### Base Structure
+#### Base Structure
 ![Robot Base](images/base.png)
 *The base structure of the robot*
 
-### Links and Joints Configuration
+#### Links and Joints Configuration
 ![Links and Joints](images/links_and_joints.png)
 *Detailed view of the robot's links and joints arrangement*
 
-### Collision Model
+#### Collision Model
 ![Collision Model](images/collision.png)
 *The collision model used for physics simulation*
 
-### Complete Robot Assembly
+#### Complete Robot Assembly
 ![Complete Robot](images/complete_robot.png)
 *The fully assembled 3-DOF robot*
 
@@ -77,15 +101,49 @@ Here are the visual representations of the robot's components and assembly:
 |------------|------|------------|-----------------|
 | world_to_base | Fixed | world → base_link | Position: Origin (0, 0, 0) |
 | base_to_link_1 | Fixed | base_link → link_1 | Position: z = 0.02m |
-| link_1_to_link_2 | Revolute | link_1 → link_2 | Axis: Y, Limits: ±90° |
-| link_2_to_link_3 | Revolute | link_2 → link_3 | Axis: Y, Limits: ±90° |
-| link_3_to_link_4 | Revolute | link_3 → link_4 | Axis: Y, Limits: ±90° |
-| link_4_to_gripper | Revolute | link_4 → gripper | Axis: Y, Limits: ±90° |
+| link_1_to_link_2 | Revolute | link_1 → link_2 | Axis: Y, Limits: ±180° |
+| link_2_to_link_3 | Revolute | link_2 → link_3 | Axis: Y, Limits: ±180° |
+| link_3_to_link_4 | Revolute | link_3 → link_4 | Axis: Y, Limits: ±180° |
+| link_4_to_gripper | Revolute | link_4 → gripper | Axis: Y, Limits: ±180° |
 
 ### URDF Structure
 - Base link with fixed joint to world
 - 4 links connected by revolute joints
-- Joint limits: ±1.57 radians (±90 degrees)
+- Joint limits: ±3.14 radians (±180 degrees)
+- Properly defined inertial properties for dynamics simulation
+
+## URDF Generation
+
+### XACRO Files
+The robot's URDF is generated from XACRO files for better maintainability and modularity:
+
+1. `robot_materials.xacro`: Contains material definitions
+   - Metallic silver for base and primary structure
+   - Deep orange for dynamic parts
+   - Sleek dark gray for secondary parts
+   - Electric blue for joints
+   - Metallic white for highlights
+
+2. `robot.urdf.xacro`: Main robot description
+   - Includes material definitions
+   - Defines robot structure
+   - Specifies joint properties and limits
+   - Contains inertial properties
+
+### Generating URDF
+
+To generate the URDF file from XACRO files, use the following command:
+
+```bash
+cd urdf/
+xacro robot.urdf.xacro > robot.urdf
+```
+
+This command:
+1. Processes the XACRO files
+2. Resolves all macros and includes
+3. Generates a complete URDF file
+4. Saves the output as `robot.urdf`
 
 ## Main Components
 
@@ -268,63 +326,67 @@ positions = [
 
 The project includes a comprehensive inverse kinematics (IK) solution for the 3-DOF robotic arm. The IK module provides functions to calculate joint angles for desired end-effector positions and analyze the robot's workspace.
 
-### Key Components
+### Mathematical Formulation
 
-1. **Inverse Kinematics Function**
-   ```python
-   theta1, theta2, theta3 = inverse_kinematics(x, z, l1, l2, l3, z_offset)
+#### Inverse Kinematics
+
+The inverse kinematics solution for the 3-DOF planar robot arm in the X-Z plane follows these steps:
+
+1. **End-Effector Orientation Angle (φ)**:
+   ```math
+   φ = arctan2(z, x)
    ```
-   - Calculates joint angles for a target (x,z) position
-   - Takes into account link lengths and base offset
-   - Handles joint limits (±90 degrees)
-   - Raises ValueError if position is unreachable
 
-2. **Workspace Analysis**
-   ```python
-   bounds = get_workspace_bounds(l1, l2, l3, z_offset)
+2. **Wrist Position Calculation**:
+   ```math
+   x_2 = x - l_3 \cos(φ)
+   z_2 = z - l_3 \sin(φ)
    ```
-   - Calculates reachable workspace boundaries
-   - Returns min/max x and z coordinates
-   - Considers joint limits and link lengths
-   - Useful for planning and validation
 
-3. **Forward Kinematics**
-   ```python
-   x, z = forward_kinematics(theta1, theta2, theta3, l1, l2, l3, z_offset)
+3. **Second Joint Angle (θ₂)**:
+   Using the cosine law:
+   ```math
+   D = \frac{x_2^2 + z_2^2 - l_1^2 - l_2^2}{2l_1l_2}
+   θ₂ = arccos(D)
    ```
-   - Verifies IK solutions
-   - Calculates end-effector position from joint angles
-   - Used for validation and testing
+   Where D must satisfy |D| ≤ 1 for the target to be reachable.
 
-### Testing and Validation
+4. **First Joint Angle (θ₁)**:
+   ```math
+   k_1 = l_1 + l_2\cos(θ₂)
+   k_2 = l_2\sin(θ₂)
+   θ₁ = arctan2(z_2, x_2) - arctan2(k_2, k_1)
+   ```
 
-The `test_inverse_kinematics.py` script provides:
-1. Visual workspace plotting
-2. Test points throughout workspace
-3. Real-time PyBullet simulation
-4. Position error analysis
-5. Forward kinematics verification
+5. **Third Joint Angle (θ₃)**:
+   ```math
+   θ₃ = φ - (θ₁ + θ₂)
+   ```
 
-### Usage Example
+#### Workspace Analysis
 
-```python
-from inverse_kinematics import inverse_kinematics, get_workspace_bounds
+The workspace analysis function generates reachable points by:
+1. Sampling joint angles in their valid ranges:
+   ```math
+   θ₁, θ₂ ∈ [-π, π]
+   θ₃ ∈ [-π, π]
+   ```
 
-# Robot parameters
-l1, l2, l3 = 0.25, 0.15, 0.15  # Link lengths
-z_offset = 0.02  # Base offset
+2. Forward kinematics for each configuration:
+   ```math
+   x_1 = l_1\cos(θ₁)
+   z_1 = l_1\sin(θ₁)
+   x_2 = x_1 + l_2\cos(θ₁ + θ₂)
+   z_2 = z_1 + l_2\sin(θ₁ + θ₂)
+   x_3 = x_2 + l_3\cos(θ₁ + θ₂ + θ₃)
+   z_3 = z_2 + l_3\sin(θ₁ + θ₂ + θ₃)
+   ```
 
-# Check workspace
-bounds = get_workspace_bounds(l1, l2, l3, z_offset)
-print(f"Workspace bounds: {bounds}")
-
-# Calculate inverse kinematics
-try:
-    theta1, theta2, theta3 = inverse_kinematics(0.2, 0.4, l1, l2, l3, z_offset)
-    print(f"Joint angles: {np.degrees([theta1, theta2, theta3])} degrees")
-except ValueError as e:
-    print(f"Position unreachable: {e}")
-```
+Where:
+- `l₁, l₂, l₃`: Link lengths
+- `(x, z)`: Target end-effector position
+- `θ₁, θ₂, θ₃`: Joint angles
+- `(x₁, z₁), (x₂, z₂), (x₃, z₃)`: Joint positions
 
 ### Implementation Details
 
