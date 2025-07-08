@@ -2,6 +2,13 @@ import pybullet as p
 import numpy as np
 from spawn_robot import spawn_robot
 import time
+import tkinter as tk
+from tkinter import ttk
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
+from collections import deque
+import threading
 
 def rad2deg(rad):
     return rad * 180.0 / np.pi
@@ -9,52 +16,154 @@ def rad2deg(rad):
 def deg2rad(deg):
     return deg * np.pi / 180.0
 
+class JointDataPlotter:
+    def __init__(self, max_points=100):
+        self.max_points = max_points
+        self.data = {}
+        self.time_points = deque(maxlen=max_points)
+        self.start_time = time.time()
+        
+        # Initialize time points
+        current_time = 0
+        for _ in range(max_points):
+            self.time_points.append(current_time)
+            current_time += 1/240.0  # Match simulation rate
+    
+    def initialize_joint(self, joint_name):
+        if joint_name not in self.data:
+            self.data[joint_name] = {
+                'position': deque([0] * self.max_points, maxlen=self.max_points),
+                'target_position': deque([0] * self.max_points, maxlen=self.max_points),
+                'coordinates': {
+                    'x': deque([0] * self.max_points, maxlen=self.max_points),
+                    'z': deque([0] * self.max_points, maxlen=self.max_points)
+                }
+            }
+    
+    def update_data(self, t, joint_name, current_pos, target_pos, coordinates):
+        self.initialize_joint(joint_name)
+        self.time_points.append(t)
+        
+        self.data[joint_name]['position'].append(current_pos)
+        self.data[joint_name]['target_position'].append(target_pos)
+        self.data[joint_name]['coordinates']['x'].append(coordinates[0])
+        self.data[joint_name]['coordinates']['z'].append(coordinates[2])
+
+def create_display_window():
+    root = tk.Tk()
+    root.title("Joint Control Dashboard")
+    root.geometry("1200x800")
+    
+    style = ttk.Style()
+    style.configure("Joint.TLabelframe", padding=10)
+    style.configure("Joint.TLabel", padding=5)
+    
+    info_frame = ttk.Frame(root, padding="10")
+    info_frame.grid(row=0, column=0, sticky="nsew")
+    
+    plot_frame = ttk.Frame(root, padding="10")
+    plot_frame.grid(row=0, column=1, sticky="nsew")
+    
+    root.grid_columnconfigure(0, weight=1)
+    root.grid_columnconfigure(1, weight=2)
+    root.grid_rowconfigure(0, weight=1)
+    
+    return root, info_frame, plot_frame
+
+def create_plots(plot_frame):
+    figs = {}
+    axes = {}
+    canvases = {}
+    
+    plot_types = ['Position Tracking', 'X-Z Trajectory']
+    
+    for i, plot_type in enumerate(plot_types):
+        fig = Figure(figsize=(6, 4), dpi=100)
+        ax = fig.add_subplot(111)
+        canvas = FigureCanvasTkAgg(fig, master=plot_frame)
+        canvas.draw()
+        canvas.get_tk_widget().grid(row=i, column=0, sticky="nsew", padx=5, pady=5)
+        plot_frame.grid_rowconfigure(i, weight=1)
+        
+        ax.set_title(plot_type)
+        ax.grid(True)
+        
+        figs[plot_type] = fig
+        axes[plot_type] = ax
+        canvases[plot_type] = canvas
+    
+    return figs, axes, canvases
+
+def update_plots(plotter, axes, canvases):
+    time_data = list(plotter.time_points)
+    if not time_data:
+        return
+    
+    # Clear all plots
+    for ax in axes.values():
+        ax.clear()
+        ax.grid(True)
+    
+    # Update all plots
+    for joint_name, joint_data in plotter.data.items():
+        positions = list(joint_data['position'])
+        targets = list(joint_data['target_position'])
+        
+        if len(positions) == len(time_data):
+            # Position Tracking plot
+            axes['Position Tracking'].plot(time_data, positions, label=f'{joint_name} Current')
+            axes['Position Tracking'].plot(time_data, targets, '--', label=f'{joint_name} Target')
+            
+            # Coordinates plot
+            coord_x = list(joint_data['coordinates']['x'])
+            coord_z = list(joint_data['coordinates']['z'])
+            if len(coord_x) == len(coord_z):
+                axes['X-Z Trajectory'].plot(coord_x, coord_z, 'o-', label=joint_name, markersize=2)
+    
+    # Set titles and labels
+    axes['Position Tracking'].set_title('Position Tracking')
+    axes['Position Tracking'].set_xlabel('Time (s)')
+    axes['Position Tracking'].set_ylabel('Position (degrees)')
+    axes['Position Tracking'].legend(loc='upper right')
+    
+    axes['X-Z Trajectory'].set_title('X-Z Trajectory')
+    axes['X-Z Trajectory'].set_xlabel('X Position (m)')
+    axes['X-Z Trajectory'].set_ylabel('Z Position (m)')
+    axes['X-Z Trajectory'].legend(loc='upper right')
+    
+    # Update all canvases
+    for canvas in canvases.values():
+        canvas.draw()
+
 def setup_joint_sliders(robot):
-    # Dictionary to store joint parameters
     joint_params = {}
     revolute_joints = {}
     
-    # Get number of joints
     num_joints = p.getNumJoints(robot)
     
-    # Create sliders for revolute joints
     for i in range(num_joints):
         joint_info = p.getJointInfo(robot, i)
         joint_name = joint_info[1].decode('utf-8')
         joint_type = joint_info[2]
         
-        # Only create controls for revolute joints
         if joint_type == p.JOINT_REVOLUTE:
             revolute_joints[joint_name] = i
             
-            # Get joint limits in radians
             lower_limit_rad = joint_info[8]
             upper_limit_rad = joint_info[9]
             
-            # Convert limits to degrees for display
             lower_limit_deg = rad2deg(lower_limit_rad)
             upper_limit_deg = rad2deg(upper_limit_rad)
             
-            # Create slider with degree values
             slider = p.addUserDebugParameter(
-                f"{joint_name} (deg)",  # Add units to name
+                f"{joint_name} (deg)",
                 lower_limit_deg,
                 upper_limit_deg,
-                0  # initial position in degrees
+                0
             )
             
-            # Create text display for coordinates
-            text_id = p.addUserDebugText(
-                f"Coordinates: X=0.000, Z=0.000 m",
-                [0.6, 0.8 - len(joint_params) * 0.1, 0],  # Position in 3D space
-                [1, 1, 1],  # White color
-                textSize=1.2
-            )
-            
-            # Store parameters
             joint_params[joint_name] = {
                 'slider': slider,
-                'text_id': text_id,
                 'limits_rad': (lower_limit_rad, upper_limit_rad),
                 'limits_deg': (lower_limit_deg, upper_limit_deg)
             }
@@ -65,20 +174,64 @@ def setup_joint_sliders(robot):
     
     return joint_params, revolute_joints
 
+def update_display(joint_params, revolute_joints, info_frame, plotter, axes, canvases, t):
+    # Clear previous widgets
+    for widget in info_frame.winfo_children():
+        widget.destroy()
+    
+    # Update joint state displays
+    for name, params in joint_params.items():
+        joint_idx = revolute_joints[name]
+        
+        # Get current joint state
+        state = p.getJointState(robot, joint_idx)
+        current_pos_rad = state[0]
+        current_pos_deg = rad2deg(current_pos_rad)
+        
+        # Get target position
+        target_pos_deg = p.readUserDebugParameter(params['slider'])
+        
+        # Get coordinates
+        link_state = p.getLinkState(robot, joint_idx)
+        link_pos = link_state[0]
+        
+        # Create joint frame
+        joint_frame = ttk.LabelFrame(info_frame, text=name, style="Joint.TLabelframe")
+        joint_frame.pack(fill="x", padx=5, pady=5)
+        
+        # Add labels with joint information
+        ttk.Label(joint_frame,
+                 text=f"Current Position: {current_pos_deg:.1f}°",
+                 style="Joint.TLabel").pack(anchor="w")
+        
+        ttk.Label(joint_frame,
+                 text=f"Target Position: {target_pos_deg:.1f}°",
+                 style="Joint.TLabel").pack(anchor="w")
+        
+        ttk.Label(joint_frame,
+                 text=f"Coordinates: X={link_pos[0]:.3f}, Z={link_pos[2]:.3f} m",
+                 style="Joint.TLabel").pack(anchor="w")
+        
+        # Update plotter data
+        plotter.update_data(t, name, current_pos_deg, target_pos_deg, link_pos)
+    
+    update_plots(plotter, axes, canvases)
+
 def control_joints_with_sliders(robot, joint_params, revolute_joints):
+    # Create display window
+    root, info_frame, plot_frame = create_display_window()
+    figs, axes, canvases = create_plots(plot_frame)
+    plotter = JointDataPlotter()
+    
+    t = 0  # Time variable
     try:
         while True:
             # Update joint states based on sliders
             for name, params in joint_params.items():
                 joint_idx = revolute_joints[name]
-                
-                # Get current slider value (in degrees)
                 target_pos_deg = p.readUserDebugParameter(params['slider'])
-                
-                # Convert to radians for PyBullet
                 target_pos_rad = deg2rad(target_pos_deg)
                 
-                # Set joint position
                 p.setJointMotorControl2(
                     robot,
                     joint_idx,
@@ -86,35 +239,32 @@ def control_joints_with_sliders(robot, joint_params, revolute_joints):
                     target_pos_rad,
                     force=100
                 )
-                
-                # Get and display current coordinates
-                link_state = p.getLinkState(robot, joint_idx)
-                link_pos = link_state[0]  # World position of center of mass
-                x_pos, z_pos = link_pos[0], link_pos[2]  # Extract X and Z coordinates
-                
-                # Update coordinate display
-                if params['text_id'] is not None:
-                    p.removeUserDebugItem(params['text_id'])
-                params['text_id'] = p.addUserDebugText(
-                    f"{name} coords: X={x_pos:.3f}, Z={z_pos:.3f} m",
-                    [0.6, 0.8 - list(joint_params.keys()).index(name) * 0.1, 0],
-                    [1, 1, 1],  # White color
-                    textSize=1.2
-                )
+            
+            # Update display and plots
+            update_display(joint_params, revolute_joints, info_frame, plotter, axes, canvases, t)
             
             p.stepSimulation()
             time.sleep(1./240.)  # 240 Hz simulation
+            t += 1./240.
+            
+            # Update Tkinter window
+            root.update()
             
     except KeyboardInterrupt:
         # Clean up debug items
         for params in joint_params.values():
             p.removeUserDebugItem(params['slider'])
-            if params['text_id'] is not None:
-                p.removeUserDebugItem(params['text_id'])
+        root.destroy()
+        p.disconnect()
+    except tk.TclError:  # Handle window closing
+        # Clean up debug items
+        for params in joint_params.values():
+            p.removeUserDebugItem(params['slider'])
         p.disconnect()
 
 def main():
     # Spawn robot and get the robot ID
+    global robot  # Make robot accessible to all functions
     robot, physics_client = spawn_robot()
     
     # Setup joint sliders
