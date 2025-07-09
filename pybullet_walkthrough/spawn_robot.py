@@ -3,11 +3,13 @@ import pybullet_data
 import os
 import time
 
-def spawn_robot():
-    # Connect to PyBullet
-    physicsClient = p.connect(p.GUI)
-    p.setAdditionalSearchPath(pybullet_data.getDataPath())
-    p.setGravity(0, 0, -9.81)
+def spawn_robot(create_connection=True):
+    # Connect to PyBullet only if requested
+    physicsClient = None
+    if create_connection:
+        physicsClient = p.connect(p.GUI)
+        p.setAdditionalSearchPath(pybullet_data.getDataPath())
+        p.setGravity(0, 0, -9.81)
 
     # Load ground plane
     planeId = p.loadURDF("plane.urdf")
