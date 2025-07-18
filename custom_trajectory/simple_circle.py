@@ -101,6 +101,21 @@ class RealTimeVisualizer:
         self.kd_label = tk.Label(self.values_frame, text="Current Kd: 0.5")
         self.kd_label.pack()
         
+        # Add Save Data Button and Status
+        tk.Label(self.control_frame, text="Data Logging", font=('Arial', 12, 'bold')).pack(pady=(20,5))
+        self.circle_label = tk.Label(self.control_frame, text="Circle #: 0")
+        self.circle_label.pack()
+        self.save_button = tk.Button(self.control_frame, text="Save Current Circle Data", 
+                                   command=self._save_button_clicked)
+        self.save_button.pack(pady=5)
+        self.save_status = tk.Label(self.control_frame, text="")
+        self.save_status.pack()
+        
+        # Data caching
+        self.current_circle_data = []
+        self.current_circle_number = 0
+        self.save_requested = False
+        
         # Bind slider updates
         self.kp_slider.configure(command=self._update_labels)
         self.kd_slider.configure(command=self._update_labels)
@@ -108,6 +123,10 @@ class RealTimeVisualizer:
     def _update_labels(self, _=None):
         self.kp_label.configure(text=f"Current Kp: {self.kp_slider.get():.2f}")
         self.kd_label.configure(text=f"Current Kd: {self.kd_slider.get():.1f}")
+    
+    def _save_button_clicked(self):
+        self.save_requested = True
+        self.save_status.configure(text="Save requested...", fg="blue")
     
     def get_gains(self):
         return self.kp_slider.get(), self.kd_slider.get()
@@ -118,6 +137,43 @@ class RealTimeVisualizer:
             self.center_z_slider.get(),
             self.radius_slider.get()
         )
+    
+    def cache_data_point(self, data_point):
+        self.current_circle_data.append(data_point)
+    
+    def clear_cache(self):
+        self.current_circle_data = []
+    
+    def save_cached_data(self, circle_number):
+        if not self.current_circle_data:
+            return False
+            
+        # Get current parameters for filename
+        kp, kd = self.get_gains()
+        center_x, center_z, radius = self.get_trajectory_params()
+        
+        # Create filename with parameters
+        timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"trajectory_kp{kp:.2f}_kd{kd:.1f}_r{radius:.2f}_x{center_x:.2f}_z{center_z:.2f}_circle{circle_number}_{timestamp_str}.csv"
+        
+        if not os.path.exists('data'):
+            os.makedirs('data')
+        filepath = os.path.join('data', filename)
+
+        header = [
+            'timestamp', 'target_x', 'target_z', 'actual_x', 'actual_z',
+            'joint1_angle', 'joint2_angle', 'joint3_angle',
+            'joint1_torque', 'joint2_torque', 'joint3_torque',
+            'kp', 'kd', 'radius', 'center_x', 'center_z'
+        ]
+        
+        with open(filepath, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(header)
+            writer.writerows(self.current_circle_data)
+        
+        self.save_status.configure(text=f"Saved circle #{circle_number}", fg="green")
+        return True
         
     def update(self, target_x, target_z, actual_x, actual_z):
         # Append new data
@@ -135,6 +191,10 @@ class RealTimeVisualizer:
         
         # Process Tkinter events
         self.root.update()
+    
+    def update_circle_number(self, number):
+        self.current_circle_number = number
+        self.circle_label.configure(text=f"Circle #: {number}")
         
     def clear_data(self):
         self.target_x = []
@@ -319,11 +379,10 @@ def main():
     # Variable to store previous trajectory parameters for change detection
     prev_params = (center_x, center_z, radius)
 
-    # --- Data Logging Setup ---
-    data_log = []
     circle_count = 0
     
     print(f"Starting simulation. Use the sliders to adjust PD gains and trajectory parameters in real-time.")
+    print("Click 'Save Current Circle Data' button to save data for the current circle.")
     print("Press Ctrl+C or close the window to stop the simulation.")
 
     try:
@@ -348,6 +407,7 @@ def main():
             
             # Clear visualization at the start of each circle
             visualizer.clear_data()
+            visualizer.clear_cache()
             
             for i, (target_x, target_z) in enumerate(trajectory_points):
                 
@@ -390,49 +450,31 @@ def main():
                     joint_angles.append(state[0])
                     joint_torques.append(state[3])
                 
-                data_log.append([
+                # Cache the data point
+                data_point = [
                     timestamp,
                     target_x, target_z,
                     actual_pos[0], actual_pos[2],
                     *joint_angles,
                     *joint_torques,
                     kp, kd,
-                    radius,  # Also log trajectory parameters
+                    radius,
                     center_x,
                     center_z
-                ])
+                ]
+                visualizer.cache_data_point(data_point)
 
                 # Check if a circle is completed
                 if i == num_trajectory_points - 1:
                     circle_count += 1
+                    visualizer.update_circle_number(circle_count)
                     print(f"Circle {circle_count} completed. Gains: Kp={kp:.2f}, Kd={kd:.1f}, "
                           f"Center: ({center_x:.2f}, {center_z:.2f}), Radius: {radius:.2f}")
                     
-                    # Save data every 5 circles
-                    if circle_count % 5 == 0:
-                        # Save current data to CSV
-                        timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-                        filename = f"trajectory_data_custom_ik_{timestamp_str}.csv"
-                        
-                        if not os.path.exists('data'):
-                            os.makedirs('data')
-                        filepath = os.path.join('data', filename)
-
-                        header = [
-                            'timestamp', 'target_x', 'target_z', 'actual_x', 'actual_z',
-                            'joint1_angle', 'joint2_angle', 'joint3_angle',
-                            'joint1_torque', 'joint2_torque', 'joint3_torque',
-                            'kp', 'kd', 'radius', 'center_x', 'center_z'
-                        ]
-                        
-                        with open(filepath, 'w', newline='') as f:
-                            writer = csv.writer(f)
-                            writer.writerow(header)
-                            writer.writerows(data_log)
-                        
-                        print(f"Data saved to '{filepath}'")
-                        # Clear data log after saving
-                        data_log = []
+                    # Check if save was requested
+                    if visualizer.save_requested:
+                        visualizer.save_cached_data(circle_count)
+                        visualizer.save_requested = False
 
     except KeyboardInterrupt:
         print("\nSimulation stopped by user.")
@@ -441,29 +483,6 @@ def main():
         # Close visualizer
         visualizer.close()
         p.disconnect()
-        
-        # Save any remaining data
-        if data_log:
-            timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"trajectory_data_custom_ik_{timestamp_str}.csv"
-            
-            if not os.path.exists('data'):
-                os.makedirs('data')
-            filepath = os.path.join('data', filename)
-
-            header = [
-                'timestamp', 'target_x', 'target_z', 'actual_x', 'actual_z',
-                'joint1_angle', 'joint2_angle', 'joint3_angle',
-                'joint1_torque', 'joint2_torque', 'joint3_torque',
-                'kp', 'kd', 'radius', 'center_x', 'center_z'
-            ]
-            
-            with open(filepath, 'w', newline='') as f:
-                writer = csv.writer(f)
-                writer.writerow(header)
-                writer.writerows(data_log)
-            
-            print(f"\nFinal data saved to '{filepath}'")
 
 if __name__ == "__main__":
     main()
