@@ -11,7 +11,7 @@ from typing import List, Tuple, Optional
 class RobotModel:
     def __init__(self):
         # Link lengths from URDF
-        self.l1: float = 0.28  # Link 1 length (fixed vertical)
+        self.l1: float = 0.27  # Link 1 length (fixed vertical)
         self.l2: float = 0.15  # Link 2 length
         self.l3: float = 0.15  # Link 3 length
         self.l4: float = 0.10  # Link 4 length

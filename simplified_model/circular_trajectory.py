@@ -25,7 +25,7 @@ class CircularTrajectoryGUI:
         self.center_z = ttk.Entry(control_frame, width=10)
         self.center_x.grid(row=1, column=1)
         self.center_z.grid(row=2, column=1)
-        self.center_x.insert(0, "0.3")  # Default X center
+        self.center_x.insert(0, "0.25")  # Default X center
         self.center_z.insert(0, "0.3")  # Default Z center
         
         ttk.Label(control_frame, text="Radius:").grid(row=3, column=0)
