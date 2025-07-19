@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 class RealTimeVisualizer:
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("Real-time Trajectory Visualization")
+        self.root.title("Real-time Trajectory and Torque Visualization")
         
         # Create main frame
         self.main_frame = tk.Frame(self.root)
@@ -25,31 +25,83 @@ class RealTimeVisualizer:
         self.control_frame = tk.Frame(self.root)
         self.control_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=10)
         
-        # Create matplotlib figure
-        self.fig = Figure(figsize=(6, 6))
-        self.ax = self.fig.add_subplot(111)
-        self.ax.set_xlabel('X Position (m)')
-        self.ax.set_ylabel('Z Position (m)')
-        self.ax.grid(True)
+        # Create matplotlib figure with three subplots
+        self.fig = Figure(figsize=(10, 10))
+        
+        # Trajectory subplot
+        self.ax_traj = self.fig.add_subplot(311)
+        self.ax_traj.set_xlabel('X Position (m)')
+        self.ax_traj.set_ylabel('Z Position (m)')
+        self.ax_traj.grid(True)
+        self.ax_traj.set_title('End-Effector Trajectory')
+        
+        # Torque subplot
+        self.ax_torque = self.fig.add_subplot(312)
+        self.ax_torque.set_xlabel('Time Step')
+        self.ax_torque.set_ylabel('Torque (N⋅m)')
+        self.ax_torque.grid(True)
+        self.ax_torque.set_title('Joint Torques')
+        
+        # Joint angles subplot
+        self.ax_angles = self.fig.add_subplot(313)
+        self.ax_angles.set_xlabel('Time Step')
+        self.ax_angles.set_ylabel('Joint Angle (rad)')
+        self.ax_angles.grid(True)
+        self.ax_angles.set_title('Joint Angles')
         
         # Create canvas
         self.canvas = FigureCanvasTkAgg(self.fig, master=self.main_frame)
         self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
         
-        # Initialize data lists
+        # Initialize trajectory data lists
         self.target_x = []
         self.target_z = []
         self.actual_x = []
         self.actual_z = []
         
-        # Create plot lines
-        self.target_line, = self.ax.plot([], [], 'r-', label='Target')
-        self.actual_line, = self.ax.plot([], [], 'b--', label='Actual')
-        self.ax.legend()
+        # Initialize torque data lists
+        self.time_steps = []
+        self.torques_joint1 = []
+        self.torques_joint2 = []
+        self.torques_joint3 = []
+        
+        # Initialize joint angle data lists
+        self.angles_joint1 = []
+        self.angles_joint2 = []
+        self.angles_joint3 = []
+        self.step_counter = 0
+        
+        # Create plot lines for trajectory
+        self.target_line, = self.ax_traj.plot([], [], 'r-', label='Target')
+        self.actual_line, = self.ax_traj.plot([], [], 'b--', label='Actual')
+        self.ax_traj.legend()
+        
+        # Create plot lines for torques
+        self.torque_lines = [
+            self.ax_torque.plot([], [], label=f'Joint {i+1}')[0]
+            for i in range(3)
+        ]
+        self.ax_torque.legend()
+        
+        # Create plot lines for joint angles
+        self.angle_lines = [
+            self.ax_angles.plot([], [], label=f'Joint {i+1}')[0]
+            for i in range(3)
+        ]
+        self.ax_angles.legend()
         
         # Set fixed axis limits based on workspace
-        self.ax.set_xlim(0, 0.5)
-        self.ax.set_ylim(0, 0.5)
+        self.ax_traj.set_xlim(0, 0.5)
+        self.ax_traj.set_ylim(0, 0.5)
+        self.ax_traj.set_aspect('equal')
+        
+        # Set initial torque plot limits
+        self.ax_torque.set_xlim(0, 100)
+        self.ax_torque.set_ylim(-50, 50)
+        
+        # Set initial joint angle plot limits
+        self.ax_angles.set_xlim(0, 100)
+        self.ax_angles.set_ylim(-3.14, 3.14)  # ±π range for joint angles
         
         # Add PD Control Gain Sliders
         tk.Label(self.control_frame, text="PD Control Gains", font=('Arial', 12, 'bold')).pack(pady=5)
@@ -121,8 +173,19 @@ class RealTimeVisualizer:
         self.kd_slider.configure(command=self._update_labels)
     
     def _update_labels(self, _=None):
-        self.kp_label.configure(text=f"Current Kp: {self.kp_slider.get():.2f}")
-        self.kd_label.configure(text=f"Current Kd: {self.kd_slider.get():.1f}")
+        """Update the display labels and print current values"""
+        kp = self.kp_slider.get()
+        kd = self.kd_slider.get()
+        self.kp_label.configure(text=f"Current Kp: {kp:.2f}")
+        self.kd_label.configure(text=f"Current Kd: {kd:.1f}")
+        
+        # Print current parameters to terminal
+        center_x = self.center_x_slider.get()
+        center_z = self.center_z_slider.get()
+        radius = self.radius_slider.get()
+        print(f"\nParameters updated:")
+        print(f"PD Gains: Kp={kp:.2f}, Kd={kd:.1f}")
+        print(f"Trajectory: Center=({center_x:.2f}, {center_z:.2f}), Radius={radius:.2f}")
     
     def _save_button_clicked(self):
         self.save_requested = True
@@ -175,16 +238,70 @@ class RealTimeVisualizer:
         self.save_status.configure(text=f"Saved circle #{circle_number}", fg="green")
         return True
         
-    def update(self, target_x, target_z, actual_x, actual_z):
-        # Append new data
+    def update(self, target_x, target_z, actual_x, actual_z, joint_torques, joint_angles):
+        # Update trajectory data
         self.target_x.append(target_x)
         self.target_z.append(target_z)
         self.actual_x.append(actual_x)
         self.actual_z.append(actual_z)
         
-        # Update plot data
+        # Update torque and angle data
+        self.step_counter += 1
+        self.time_steps.append(self.step_counter)
+        
+        # Update torques
+        self.torques_joint1.append(joint_torques[0])
+        self.torques_joint2.append(joint_torques[1])
+        self.torques_joint3.append(joint_torques[2])
+        
+        # Update angles
+        self.angles_joint1.append(joint_angles[0])
+        self.angles_joint2.append(joint_angles[1])
+        self.angles_joint3.append(joint_angles[2])
+        
+        # Keep only last 100 points for time series plots
+        if len(self.time_steps) > 100:
+            self.time_steps = self.time_steps[-100:]
+            self.torques_joint1 = self.torques_joint1[-100:]
+            self.torques_joint2 = self.torques_joint2[-100:]
+            self.torques_joint3 = self.torques_joint3[-100:]
+            self.angles_joint1 = self.angles_joint1[-100:]
+            self.angles_joint2 = self.angles_joint2[-100:]
+            self.angles_joint3 = self.angles_joint3[-100:]
+            
+            # Update x-axis limits to show moving window
+            self.ax_torque.set_xlim(self.step_counter - 100, self.step_counter)
+            self.ax_angles.set_xlim(self.step_counter - 100, self.step_counter)
+        
+        # Update trajectory plot
         self.target_line.set_data(self.target_x, self.target_z)
         self.actual_line.set_data(self.actual_x, self.actual_z)
+        
+        # Update torque plots
+        torque_data = [self.torques_joint1, self.torques_joint2, self.torques_joint3]
+        for line, torques in zip(self.torque_lines, torque_data):
+            line.set_data(self.time_steps, torques)
+        
+        # Update joint angle plots
+        angle_data = [self.angles_joint1, self.angles_joint2, self.angles_joint3]
+        for line, angles in zip(self.angle_lines, angle_data):
+            line.set_data(self.time_steps, angles)
+        
+        # Adjust y-axis limits of torque plot if needed
+        all_torques = self.torques_joint1 + self.torques_joint2 + self.torques_joint3
+        if all_torques:
+            min_torque = min(all_torques)
+            max_torque = max(all_torques)
+            margin = (max_torque - min_torque) * 0.1
+            self.ax_torque.set_ylim(min_torque - margin, max_torque + margin)
+        
+        # Adjust y-axis limits of angle plot if needed
+        all_angles = self.angles_joint1 + self.angles_joint2 + self.angles_joint3
+        if all_angles:
+            min_angle = min(all_angles)
+            max_angle = max(all_angles)
+            margin = (max_angle - min_angle) * 0.1
+            self.ax_angles.set_ylim(min_angle - margin, max_angle + margin)
         
         # Redraw canvas
         self.canvas.draw()
@@ -197,12 +314,32 @@ class RealTimeVisualizer:
         self.circle_label.configure(text=f"Circle #: {number}")
         
     def clear_data(self):
+        # Clear trajectory data
         self.target_x = []
         self.target_z = []
         self.actual_x = []
         self.actual_z = []
         self.target_line.set_data([], [])
         self.actual_line.set_data([], [])
+        
+        # Clear torque data
+        self.time_steps = []
+        self.torques_joint1 = []
+        self.torques_joint2 = []
+        self.torques_joint3 = []
+        
+        # Clear angle data
+        self.angles_joint1 = []
+        self.angles_joint2 = []
+        self.angles_joint3 = []
+        self.step_counter = 0
+        
+        # Clear all lines
+        for line in self.torque_lines:
+            line.set_data([], [])
+        for line in self.angle_lines:
+            line.set_data([], [])
+        
         self.canvas.draw()
         
     def close(self):
@@ -376,6 +513,12 @@ def main():
     # Generate initial trajectory
     trajectory_points = generate_circular_trajectory(center_x, center_z, radius, num_trajectory_points)
     
+    # Draw initial trajectory in PyBullet workspace
+    for i in range(num_trajectory_points):
+        p1 = [trajectory_points[i][0], 0, trajectory_points[i][1]]
+        p2 = [trajectory_points[(i + 1) % num_trajectory_points][0], 0, trajectory_points[(i + 1) % num_trajectory_points][1]]
+        p.addUserDebugLine(p1, p2, lineColorRGB=[1, 0, 0], lineWidth=2)
+    
     # Variable to store previous trajectory parameters for change detection
     prev_params = (center_x, center_z, radius)
 
@@ -437,26 +580,38 @@ def main():
                 link_state = p.getLinkState(robot_id, ee_link_index)
                 actual_pos = link_state[0]
                 
+                # Get current joint torques
+                joint_torques = []
+                for joint_index in actuated_joint_indices:
+                    state = p.getJointState(robot_id, joint_index)
+                    joint_torques.append(state[3])  # Torque is at index 3
+                
+                # Get current joint angles
+                joint_angles = []
+                for joint_index in actuated_joint_indices:
+                    state = p.getJointState(robot_id, joint_index)
+                    joint_angles.append(state[0]) # Angle is at index 0
+                
                 # Update visualization
-                visualizer.update(target_x, target_z, actual_pos[0], actual_pos[2])
+                visualizer.update(target_x, target_z, actual_pos[0], actual_pos[2], joint_torques, joint_angles)
 
                 # --- Data Collection ---
                 timestamp = time.time()
                 
-                joint_angles = []
-                joint_torques = []
+                joint_angles_for_data = []
+                joint_torques_for_data = []
                 for joint_index in actuated_joint_indices:
                     state = p.getJointState(robot_id, joint_index)
-                    joint_angles.append(state[0])
-                    joint_torques.append(state[3])
+                    joint_angles_for_data.append(state[0]) # Angle is at index 0
+                    joint_torques_for_data.append(state[3])  # Torque is at index 3
                 
                 # Cache the data point
                 data_point = [
                     timestamp,
                     target_x, target_z,
                     actual_pos[0], actual_pos[2],
-                    *joint_angles,
-                    *joint_torques,
+                    *joint_angles_for_data,
+                    *joint_torques_for_data,
                     kp, kd,
                     radius,
                     center_x,
