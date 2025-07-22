@@ -406,31 +406,26 @@ def get_joint_info(robot_id):
 
 def generate_semi_circular_trajectory(cx, cy, radius, num_points):
     """
-    Generates a list of (x, y) points for a closed semi-circular trajectory.
-    The trajectory consists of a semi-circle (clockwise) and a straight line connecting the endpoints.
+    Generates a list of (x, y) points for a bidirectional semi-circular trajectory.
+    The trajectory follows the same semi-circle path forward and backward.
     """
     trajectory = []
     
-    # Calculate number of points for each segment
-    # Use 2/3 of points for semi-circle and 1/3 for straight line for smooth motion
-    arc_points = int(2 * num_points / 3)
-    line_points = num_points - arc_points
+    # Use half points for each direction
+    points_per_direction = num_points // 2
     
-    # Generate semi-circle points (π to 0 radians for clockwise motion)
-    for i in range(arc_points):
-        angle = math.pi * (1 - i / (arc_points - 1))  # Changed angle calculation for clockwise motion
+    # Generate forward semi-circle points (π to 0 radians for clockwise motion)
+    for i in range(points_per_direction):
+        angle = math.pi * (1 - i / (points_per_direction - 1))
         x = cx + radius * math.cos(angle)
         z = cy + radius * math.sin(angle)
         trajectory.append((x, z))
     
-    # Generate straight line points connecting the endpoints
-    start_point = (cx + radius, cy)    # Right endpoint (where semi-circle ends)
-    end_point = (cx - radius, cy)      # Left endpoint (where semi-circle starts)
-    
-    for i in range(line_points):
-        t = i / (line_points - 1)
-        x = start_point[0] + t * (end_point[0] - start_point[0])
-        z = start_point[1] + t * (end_point[1] - start_point[1])
+    # Generate return semi-circle points (0 to π radians for counter-clockwise return)
+    for i in range(points_per_direction):
+        angle = math.pi * i / (points_per_direction - 1)
+        x = cx + radius * math.cos(angle)
+        z = cy + radius * math.sin(angle)
         trajectory.append((x, z))
     
     return trajectory
@@ -481,7 +476,7 @@ def main():
     visualizer = RealTimeVisualizer()
     
     center_x, center_z, radius = visualizer.get_trajectory_params()
-    num_trajectory_points = 250  # Reduced points for semi-circle
+    num_trajectory_points = 250  # Points will be split between forward and return paths
     
     trajectory_points = generate_semi_circular_trajectory(center_x, center_z, radius, num_trajectory_points)
     
@@ -503,11 +498,8 @@ def main():
         basePosition=[0, 0, 0]
     )
     
-    # Calculate arc points index
-    arc_points = int(2 * num_trajectory_points / 3)  # Number of points in the semi-circular part
-    
     # Draw initial trajectory in PyBullet workspace
-    for i in range(num_trajectory_points - 1):
+    for i in range(len(trajectory_points) - 1):
         p1 = [trajectory_points[i][0], 0, trajectory_points[i][1]]
         p2 = [trajectory_points[i + 1][0], 0, trajectory_points[i + 1][1]]
         p.addUserDebugLine(p1, p2, lineColorRGB=[1, 0, 0], lineWidth=2)
@@ -529,7 +521,7 @@ def main():
                 
                 p.removeAllUserDebugItems()
                 
-                for i in range(num_trajectory_points - 1):
+                for i in range(len(trajectory_points) - 1):
                     p1 = [trajectory_points[i][0], 0, trajectory_points[i][1]]
                     p2 = [trajectory_points[i + 1][0], 0, trajectory_points[i + 1][1]]
                     p.addUserDebugLine(p1, p2, lineColorRGB=[1, 0, 0], lineWidth=2)
@@ -558,7 +550,7 @@ def main():
                 time.sleep(1./240.)
 
                 # Only show marker during the semi-circular part
-                if i < arc_points:
+                if i < num_trajectory_points // 2: # Check if it's in the forward semi-circle
                     # Get positions of the two joints
                     link3_state = p.getLinkState(robot_id, link3_to_link4_index)
                     link4_state = p.getLinkState(robot_id, link4_to_gripper_index)
