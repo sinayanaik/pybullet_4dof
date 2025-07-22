@@ -480,6 +480,31 @@ def main():
     
     trajectory_points = generate_semi_circular_trajectory(center_x, center_z, radius, num_trajectory_points)
     
+    # Create visual markers for start and end points
+    marker_radius = 0.01  # Size of the spherical markers
+    marker_color = [0, 1, 0, 1]  # Green color [R, G, B, Alpha]
+    start_point = [center_x - radius, 0, center_z]  # Left endpoint
+    end_point = [center_x + radius, 0, center_z]    # Right endpoint
+    
+    # Create visual shape for markers
+    marker_visual = p.createVisualShape(
+        shapeType=p.GEOM_SPHERE,
+        radius=marker_radius,
+        rgbaColor=marker_color
+    )
+    
+    # Create the marker bodies (with no collision)
+    start_marker = p.createMultiBody(
+        baseMass=0,
+        baseVisualShapeIndex=marker_visual,
+        basePosition=start_point
+    )
+    end_marker = p.createMultiBody(
+        baseMass=0,
+        baseVisualShapeIndex=marker_visual,
+        basePosition=end_point
+    )
+    
     # Draw initial trajectory in PyBullet workspace
     for i in range(num_trajectory_points - 1):
         p1 = [trajectory_points[i][0], 0, trajectory_points[i][1]]
@@ -500,6 +525,12 @@ def main():
                 center_x, center_z, radius = current_params
                 trajectory_points = generate_semi_circular_trajectory(center_x, center_z, radius, num_trajectory_points)
                 prev_params = current_params
+                
+                # Update marker positions
+                start_point = [center_x - radius, 0, center_z]
+                end_point = [center_x + radius, 0, center_z]
+                p.resetBasePositionAndOrientation(start_marker, start_point, [0, 0, 0, 1])
+                p.resetBasePositionAndOrientation(end_marker, end_point, [0, 0, 0, 1])
                 
                 p.removeAllUserDebugItems()
                 
