@@ -379,6 +379,8 @@ def get_joint_info(robot_id):
     
     num_joints = p.getNumJoints(robot_id)
     end_effector_link_index = -1
+    link3_to_link4_index = -1
+    link4_to_gripper_index = -1
 
     for i in range(num_joints):
         info = p.getJointInfo(robot_id, i)
@@ -391,13 +393,16 @@ def get_joint_info(robot_id):
 
         if joint_name == "link_4_to_gripper":
             end_effector_link_index = i
+            link4_to_gripper_index = i
+        elif joint_name == "link_3_to_link_4":
+            link3_to_link4_index = i
 
     print("Actuated Joints Found:")
     for i, name in zip(actuated_joint_indices, joint_names):
         print(f"- {name} (Index: {i})")
     print(f"End-Effector Link Index: {end_effector_link_index}\n")
 
-    return actuated_joint_indices, end_effector_link_index
+    return actuated_joint_indices, end_effector_link_index, link3_to_link4_index, link4_to_gripper_index
 
 def generate_semi_circular_trajectory(cx, cy, radius, num_points):
     """
@@ -471,7 +476,7 @@ def main():
         return
 
     robot_id = setup_simulation(urdf_file)
-    actuated_joint_indices, ee_link_index = get_joint_info(robot_id)
+    actuated_joint_indices, ee_link_index, link3_to_link4_index, link4_to_gripper_index = get_joint_info(robot_id)
 
     visualizer = RealTimeVisualizer()
     
@@ -480,30 +485,26 @@ def main():
     
     trajectory_points = generate_semi_circular_trajectory(center_x, center_z, radius, num_trajectory_points)
     
-    # Create visual markers for start and end points
-    marker_radius = 0.01  # Size of the spherical markers
+    # Create visual marker for gripper effect
+    marker_radius = 0.0165  # Increased size to exactly 0.0165 meters
     marker_color = [0, 1, 0, 1]  # Green color [R, G, B, Alpha]
-    start_point = [center_x - radius, 0, center_z]  # Left endpoint
-    end_point = [center_x + radius, 0, center_z]    # Right endpoint
     
-    # Create visual shape for markers
+    # Create visual shape for marker
     marker_visual = p.createVisualShape(
         shapeType=p.GEOM_SPHERE,
         radius=marker_radius,
         rgbaColor=marker_color
     )
     
-    # Create the marker bodies (with no collision)
-    start_marker = p.createMultiBody(
+    # Create the marker body (with no collision)
+    gripper_marker = p.createMultiBody(
         baseMass=0,
         baseVisualShapeIndex=marker_visual,
-        basePosition=start_point
+        basePosition=[0, 0, 0]
     )
-    end_marker = p.createMultiBody(
-        baseMass=0,
-        baseVisualShapeIndex=marker_visual,
-        basePosition=end_point
-    )
+    
+    # Calculate arc points index
+    arc_points = int(2 * num_trajectory_points / 3)  # Number of points in the semi-circular part
     
     # Draw initial trajectory in PyBullet workspace
     for i in range(num_trajectory_points - 1):
@@ -525,12 +526,6 @@ def main():
                 center_x, center_z, radius = current_params
                 trajectory_points = generate_semi_circular_trajectory(center_x, center_z, radius, num_trajectory_points)
                 prev_params = current_params
-                
-                # Update marker positions
-                start_point = [center_x - radius, 0, center_z]
-                end_point = [center_x + radius, 0, center_z]
-                p.resetBasePositionAndOrientation(start_marker, start_point, [0, 0, 0, 1])
-                p.resetBasePositionAndOrientation(end_marker, end_point, [0, 0, 0, 1])
                 
                 p.removeAllUserDebugItems()
                 
@@ -562,6 +557,40 @@ def main():
                 p.stepSimulation()
                 time.sleep(1./240.)
 
+                # Only show marker during the semi-circular part
+                if i < arc_points:
+                    # Get positions of the two joints
+                    link3_state = p.getLinkState(robot_id, link3_to_link4_index)
+                    link4_state = p.getLinkState(robot_id, link4_to_gripper_index)
+                    
+                    # Get the direction vector between the joints
+                    dir_x = link4_state[0][0] - link3_state[0][0]
+                    dir_y = link4_state[0][1] - link3_state[0][1]
+                    dir_z = link4_state[0][2] - link3_state[0][2]
+                    
+                    # Normalize the direction vector
+                    length = np.sqrt(dir_x**2 + dir_y**2 + dir_z**2)
+                    if length > 0:
+                        dir_x /= length
+                        dir_y /= length
+                        dir_z /= length
+                        
+                        # Extend from the gripper joint by 0.03m (reduced from 0.08m)
+                        offset = 0.03
+                        marker_pos = [
+                            link4_state[0][0] + dir_x * offset,
+                            link4_state[0][1] + dir_y * offset,
+                            link4_state[0][2] + dir_z * offset
+                        ]
+                        
+                        # Update marker position with gripper orientation
+                        p.resetBasePositionAndOrientation(gripper_marker, marker_pos, link4_state[1])
+                else:
+                    # Hide marker during straight line motion
+                    hide_pos = [1000, 1000, 1000]
+                    p.resetBasePositionAndOrientation(gripper_marker, hide_pos, [0, 0, 0, 1])
+                
+                # Get end effector state for visualization and data logging
                 link_state = p.getLinkState(robot_id, ee_link_index)
                 actual_pos = link_state[0]
                 
