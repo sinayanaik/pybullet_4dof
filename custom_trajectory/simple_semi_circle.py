@@ -110,7 +110,7 @@ class RealTimeVisualizer:
         tk.Label(self.control_frame, text="Position Gain (Kp)").pack()
         self.kp_slider = tk.Scale(self.control_frame, from_=0.01, to=1.0, resolution=0.01, 
                                 orient=tk.HORIZONTAL, length=200)
-        self.kp_slider.set(0.50)  # Updated to match successful parameters
+        self.kp_slider.set(0.10)  # Updated to match successful parameters
         self.kp_slider.pack(pady=5)
         
         # Kd slider
