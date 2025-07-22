@@ -407,7 +407,7 @@ def get_joint_info(robot_id):
 def generate_semi_circular_trajectory(cx, cy, radius, num_points):
     """
     Generates a list of (x, y) points for a closed semi-circular trajectory.
-    The trajectory consists of a semi-circle and a straight line connecting the endpoints.
+    The trajectory consists of a semi-circle (clockwise) and a straight line connecting the endpoints.
     """
     trajectory = []
     
@@ -416,16 +416,16 @@ def generate_semi_circular_trajectory(cx, cy, radius, num_points):
     arc_points = int(2 * num_points / 3)
     line_points = num_points - arc_points
     
-    # Generate semi-circle points (0 to π radians)
+    # Generate semi-circle points (π to 0 radians for clockwise motion)
     for i in range(arc_points):
-        angle = math.pi * i / (arc_points - 1)
+        angle = math.pi * (1 - i / (arc_points - 1))  # Changed angle calculation for clockwise motion
         x = cx + radius * math.cos(angle)
         z = cy + radius * math.sin(angle)
         trajectory.append((x, z))
     
     # Generate straight line points connecting the endpoints
-    start_point = (cx - radius, cy)  # Left endpoint
-    end_point = (cx + radius, cy)    # Right endpoint
+    start_point = (cx + radius, cy)    # Right endpoint (where semi-circle ends)
+    end_point = (cx - radius, cy)      # Left endpoint (where semi-circle starts)
     
     for i in range(line_points):
         t = i / (line_points - 1)
