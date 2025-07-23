@@ -16,6 +16,7 @@ class RealTimeVisualizer:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("Real-time Semi-Circle Trajectory and Torque Visualization")
+        self.root.protocol("WM_DELETE_WINDOW", self.close)  # Handle window close button
         
         # Create main frame
         self.main_frame = tk.Frame(self.root)
@@ -70,6 +71,9 @@ class RealTimeVisualizer:
         self.angles_joint2 = []
         self.angles_joint3 = []
         self.step_counter = 0
+        
+        # Initialize window closed flag
+        self.window_closed = False
         
         # Create plot lines for trajectory
         self.target_line, = self.ax_traj.plot([], [], 'r-', label='Target')
@@ -239,75 +243,84 @@ class RealTimeVisualizer:
         return True
         
     def update(self, target_x, target_z, actual_x, actual_z, joint_torques, joint_angles):
-        # Update trajectory data
-        self.target_x.append(target_x)
-        self.target_z.append(target_z)
-        self.actual_x.append(actual_x)
-        self.actual_z.append(actual_z)
-        
-        # Update torque and angle data
-        self.step_counter += 1
-        self.time_steps.append(self.step_counter)
-        
-        # Update torques
-        self.torques_joint1.append(joint_torques[0])
-        self.torques_joint2.append(joint_torques[1])
-        self.torques_joint3.append(joint_torques[2])
-        
-        # Update angles
-        self.angles_joint1.append(joint_angles[0])
-        self.angles_joint2.append(joint_angles[1])
-        self.angles_joint3.append(joint_angles[2])
-        
-        # Keep only last 100 points for time series plots
-        if len(self.time_steps) > 100:
-            self.time_steps = self.time_steps[-100:]
-            self.torques_joint1 = self.torques_joint1[-100:]
-            self.torques_joint2 = self.torques_joint2[-100:]
-            self.torques_joint3 = self.torques_joint3[-100:]
-            self.angles_joint1 = self.angles_joint1[-100:]
-            self.angles_joint2 = self.angles_joint2[-100:]
-            self.angles_joint3 = self.angles_joint3[-100:]
+        """Update the visualization"""
+        if self.window_closed:
+            return False
             
-            # Update x-axis limits to show moving window
-            self.ax_torque.set_xlim(self.step_counter - 100, self.step_counter)
-            self.ax_angles.set_xlim(self.step_counter - 100, self.step_counter)
-        
-        # Update trajectory plot
-        self.target_line.set_data(self.target_x, self.target_z)
-        self.actual_line.set_data(self.actual_x, self.actual_z)
-        
-        # Update torque plots
-        torque_data = [self.torques_joint1, self.torques_joint2, self.torques_joint3]
-        for line, torques in zip(self.torque_lines, torque_data):
-            line.set_data(self.time_steps, torques)
-        
-        # Update joint angle plots
-        angle_data = [self.angles_joint1, self.angles_joint2, self.angles_joint3]
-        for line, angles in zip(self.angle_lines, angle_data):
-            line.set_data(self.time_steps, angles)
-        
-        # Adjust y-axis limits of torque plot if needed
-        all_torques = self.torques_joint1 + self.torques_joint2 + self.torques_joint3
-        if all_torques:
-            min_torque = min(all_torques)
-            max_torque = max(all_torques)
-            margin = (max_torque - min_torque) * 0.1
-            self.ax_torque.set_ylim(min_torque - margin, max_torque + margin)
-        
-        # Adjust y-axis limits of angle plot if needed
-        all_angles = self.angles_joint1 + self.angles_joint2 + self.angles_joint3
-        if all_angles:
-            min_angle = min(all_angles)
-            max_angle = max(all_angles)
-            margin = (max_angle - min_angle) * 0.1
-            self.ax_angles.set_ylim(min_angle - margin, max_angle + margin)
-        
-        # Redraw canvas
-        self.canvas.draw()
-        
-        # Process Tkinter events
-        self.root.update()
+        try:
+            # Update trajectory data
+            self.target_x.append(target_x)
+            self.target_z.append(target_z)
+            self.actual_x.append(actual_x)
+            self.actual_z.append(actual_z)
+            
+            # Update torque and angle data
+            self.step_counter += 1
+            self.time_steps.append(self.step_counter)
+            
+            # Update torques
+            self.torques_joint1.append(joint_torques[0])
+            self.torques_joint2.append(joint_torques[1])
+            self.torques_joint3.append(joint_torques[2])
+            
+            # Update angles
+            self.angles_joint1.append(joint_angles[0])
+            self.angles_joint2.append(joint_angles[1])
+            self.angles_joint3.append(joint_angles[2])
+            
+            # Keep only last 100 points for time series plots
+            if len(self.time_steps) > 100:
+                self.time_steps = self.time_steps[-100:]
+                self.torques_joint1 = self.torques_joint1[-100:]
+                self.torques_joint2 = self.torques_joint2[-100:]
+                self.torques_joint3 = self.torques_joint3[-100:]
+                self.angles_joint1 = self.angles_joint1[-100:]
+                self.angles_joint2 = self.angles_joint2[-100:]
+                self.angles_joint3 = self.angles_joint3[-100:]
+                
+                # Update x-axis limits to show moving window
+                self.ax_torque.set_xlim(self.step_counter - 100, self.step_counter)
+                self.ax_angles.set_xlim(self.step_counter - 100, self.step_counter)
+            
+            # Update trajectory plot
+            self.target_line.set_data(self.target_x, self.target_z)
+            self.actual_line.set_data(self.actual_x, self.actual_z)
+            
+            # Update torque plots
+            torque_data = [self.torques_joint1, self.torques_joint2, self.torques_joint3]
+            for line, torques in zip(self.torque_lines, torque_data):
+                line.set_data(self.time_steps, torques)
+            
+            # Update joint angle plots
+            angle_data = [self.angles_joint1, self.angles_joint2, self.angles_joint3]
+            for line, angles in zip(self.angle_lines, angle_data):
+                line.set_data(self.time_steps, angles)
+            
+            # Adjust y-axis limits of torque plot if needed
+            all_torques = self.torques_joint1 + self.torques_joint2 + self.torques_joint3
+            if all_torques:
+                min_torque = min(all_torques)
+                max_torque = max(all_torques)
+                margin = (max_torque - min_torque) * 0.1
+                self.ax_torque.set_ylim(min_torque - margin, max_torque + margin)
+            
+            # Adjust y-axis limits of angle plot if needed
+            all_angles = self.angles_joint1 + self.angles_joint2 + self.angles_joint3
+            if all_angles:
+                min_angle = min(all_angles)
+                max_angle = max(all_angles)
+                margin = (max_angle - min_angle) * 0.1
+                self.ax_angles.set_ylim(min_angle - margin, max_angle + margin)
+            
+            # Redraw canvas
+            self.canvas.draw()
+            
+            # Process Tkinter events
+            self.root.update()
+            return True
+        except:
+            self.window_closed = True
+            return False
     
     def update_semi_circle_number(self, number):
         self.current_semi_circle_number = number
@@ -343,7 +356,18 @@ class RealTimeVisualizer:
         self.canvas.draw()
         
     def close(self):
-        self.root.destroy()
+        """Safely close the visualization window"""
+        try:
+            self.window_closed = True
+            if self.root:
+                self.root.quit()
+                self.root.destroy()
+        except:
+            pass  # Ignore any errors during cleanup
+
+    def is_closed(self):
+        """Check if the window has been closed"""
+        return self.window_closed
 
 def setup_simulation(urdf_path):
     """
@@ -512,7 +536,7 @@ def main():
     print("Press Ctrl+C or close the window to stop the simulation.")
 
     try:
-        while True:
+        while not visualizer.is_closed():
             current_params = visualizer.get_trajectory_params()
             if current_params != prev_params:
                 center_x, center_z, radius = current_params
@@ -530,6 +554,9 @@ def main():
             visualizer.clear_cache()
             
             for i, (target_x, target_z) in enumerate(trajectory_points):
+                if visualizer.is_closed():
+                    break
+                    
                 kp, kd = visualizer.get_gains()
                 
                 joint_poses = custom_inverse_kinematics(target_x, target_z, link_lengths)
@@ -596,7 +623,8 @@ def main():
                     state = p.getJointState(robot_id, joint_index)
                     joint_angles.append(state[0])
                 
-                visualizer.update(target_x, target_z, actual_pos[0], actual_pos[2], joint_torques, joint_angles)
+                if not visualizer.update(target_x, target_z, actual_pos[0], actual_pos[2], joint_torques, joint_angles):
+                    break
 
                 timestamp = time.time()
                 
