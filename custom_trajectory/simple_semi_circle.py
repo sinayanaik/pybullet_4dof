@@ -504,8 +504,8 @@ def main():
     
     trajectory_points = generate_semi_circular_trajectory(center_x, center_z, radius, num_trajectory_points)
     
-    # Create visual marker for gripper effect
-    marker_radius = 0.0165  # Increased size to exactly 0.0165 meters
+    # Create visual marker for gripper effect (ball being manipulated)
+    marker_radius = 0.0165  # Size of the ball being manipulated
     marker_color = [0, 1, 0, 1]  # Green color [R, G, B, Alpha]
     
     # Create visual shape for marker
@@ -520,6 +520,133 @@ def main():
         baseMass=0,
         baseVisualShapeIndex=marker_visual,
         basePosition=[0, 0, 0]
+    )
+    
+    # Create box containers for start and end points
+    # Make boxes larger and rectangular (like storage containers)
+    box_size = [0.06, 0.08, 0.08]  # Width, Length, Height (increased height)
+    box_base_thickness = 0.01  # Thickness of the box base and walls
+    
+    # Colors for the boxes and their contents
+    start_box_color = [0.8, 0.2, 0.2, 0.9]  # Red box
+    end_box_color = [0.2, 0.2, 0.8, 0.9]    # Blue box
+    
+    # Create the container boxes (main body)
+    start_box_visual = p.createVisualShape(
+        shapeType=p.GEOM_BOX,
+        halfExtents=[box_size[0]/2, box_size[1]/2, box_base_thickness/2],  # Base
+        rgbaColor=start_box_color
+    )
+    
+    end_box_visual = p.createVisualShape(
+        shapeType=p.GEOM_BOX,
+        halfExtents=[box_size[0]/2, box_size[1]/2, box_base_thickness/2],  # Base
+        rgbaColor=end_box_color
+    )
+    
+    # Create walls for the boxes
+    wall_height = box_size[2]
+    wall_thickness = box_base_thickness
+    
+    # Visual shapes for walls (same color as the base)
+    wall_shapes = {
+        'start': [],
+        'end': []
+    }
+    
+    # Create walls for both boxes
+    for box_type in ['start', 'end']:
+        color = start_box_color if box_type == 'start' else end_box_color
+        
+        # Front wall
+        wall_shapes[box_type].append(
+            p.createVisualShape(
+                shapeType=p.GEOM_BOX,
+                halfExtents=[box_size[0]/2, wall_thickness/2, wall_height/2],
+                rgbaColor=color
+            )
+        )
+        
+        # Back wall
+        wall_shapes[box_type].append(
+            p.createVisualShape(
+                shapeType=p.GEOM_BOX,
+                halfExtents=[box_size[0]/2, wall_thickness/2, wall_height/2],
+                rgbaColor=color
+            )
+        )
+        
+        # Left wall
+        wall_shapes[box_type].append(
+            p.createVisualShape(
+                shapeType=p.GEOM_BOX,
+                halfExtents=[wall_thickness/2, box_size[1]/2, wall_height/2],
+                rgbaColor=color
+            )
+        )
+        
+        # Right wall
+        wall_shapes[box_type].append(
+            p.createVisualShape(
+                shapeType=p.GEOM_BOX,
+                halfExtents=[wall_thickness/2, box_size[1]/2, wall_height/2],
+                rgbaColor=color
+            )
+        )
+    
+    # Calculate start and end positions for the boxes
+    start_point = trajectory_points[0]
+    end_point = trajectory_points[num_trajectory_points // 2 - 1]
+    
+    # Add offset to box positions (move red box left, blue box right)
+    box_x_offset = 0.0175  # 1.75cm offset
+    start_point = (start_point[0] - box_x_offset, start_point[1])  # Move red box left
+    end_point = (end_point[0] + box_x_offset, end_point[1])      # Move blue box right
+    
+    # Create the box containers with their walls
+    def create_container(base_pos, base_visual, wall_shapes):
+        # Create base - position adjusted to sit on ground
+        base = p.createMultiBody(
+            baseMass=0,
+            baseVisualShapeIndex=base_visual,
+            basePosition=[base_pos[0], 0, box_base_thickness/2]  # Adjusted to sit on ground
+        )
+        
+        # Wall positions relative to base
+        wall_positions = [
+            [0, box_size[1]/2, wall_height/2],    # Front wall
+            [0, -box_size[1]/2, wall_height/2],   # Back wall
+            [-box_size[0]/2, 0, wall_height/2],   # Left wall
+            [box_size[0]/2, 0, wall_height/2]     # Right wall
+        ]
+        
+        # Create walls
+        walls = []
+        for wall_shape, rel_pos in zip(wall_shapes, wall_positions):
+            wall = p.createMultiBody(
+                baseMass=0,
+                baseVisualShapeIndex=wall_shape,
+                basePosition=[
+                    base_pos[0] + rel_pos[0],
+                    0 + rel_pos[1],
+                    rel_pos[2]  # Adjusted to be relative to ground
+                ]
+            )
+            walls.append(wall)
+        
+        return [base] + walls
+    
+    # Create both containers with their walls
+    start_container = create_container(
+        [start_point[0], start_point[1]], 
+        start_box_visual, 
+        wall_shapes['start']
+    )
+    
+    end_container = create_container(
+        [end_point[0], end_point[1]], 
+        end_box_visual, 
+        wall_shapes['end']
     )
     
     # Draw initial trajectory in PyBullet workspace
@@ -542,6 +669,68 @@ def main():
                 center_x, center_z, radius = current_params
                 trajectory_points = generate_semi_circular_trajectory(center_x, center_z, radius, num_trajectory_points)
                 prev_params = current_params
+                
+                # Update container positions when trajectory parameters change
+                start_point = trajectory_points[0]
+                end_point = trajectory_points[num_trajectory_points // 2 - 1]
+                
+                # Apply offset to box positions
+                start_point = (start_point[0] - box_x_offset, start_point[1])  # Move red box left
+                end_point = (end_point[0] + box_x_offset, end_point[1])      # Move blue box right
+                
+                # Update start container position
+                for i, body_id in enumerate(start_container):
+                    if i == 0:  # Base
+                        p.resetBasePositionAndOrientation(
+                            body_id,
+                            [start_point[0], 0, box_base_thickness/2],  # Adjusted to sit on ground
+                            [0, 0, 0, 1]
+                        )
+                    else:  # Walls
+                        wall_idx = i - 1
+                        wall_positions = [
+                            [0, box_size[1]/2, wall_height/2],    # Front wall
+                            [0, -box_size[1]/2, wall_height/2],   # Back wall
+                            [-box_size[0]/2, 0, wall_height/2],   # Left wall
+                            [box_size[0]/2, 0, wall_height/2]     # Right wall
+                        ]
+                        rel_pos = wall_positions[wall_idx]
+                        p.resetBasePositionAndOrientation(
+                            body_id,
+                            [
+                                start_point[0] + rel_pos[0],
+                                0 + rel_pos[1],
+                                rel_pos[2]  # Adjusted to be relative to ground
+                            ],
+                            [0, 0, 0, 1]
+                        )
+                
+                # Update end container position
+                for i, body_id in enumerate(end_container):
+                    if i == 0:  # Base
+                        p.resetBasePositionAndOrientation(
+                            body_id,
+                            [end_point[0], 0, box_base_thickness/2],  # Adjusted to sit on ground
+                            [0, 0, 0, 1]
+                        )
+                    else:  # Walls
+                        wall_idx = i - 1
+                        wall_positions = [
+                            [0, box_size[1]/2, wall_height/2],    # Front wall
+                            [0, -box_size[1]/2, wall_height/2],   # Back wall
+                            [-box_size[0]/2, 0, wall_height/2],   # Left wall
+                            [box_size[0]/2, 0, wall_height/2]     # Right wall
+                        ]
+                        rel_pos = wall_positions[wall_idx]
+                        p.resetBasePositionAndOrientation(
+                            body_id,
+                            [
+                                end_point[0] + rel_pos[0],
+                                0 + rel_pos[1],
+                                rel_pos[2]  # Adjusted to be relative to ground
+                            ],
+                            [0, 0, 0, 1]
+                        )
                 
                 p.removeAllUserDebugItems()
                 
