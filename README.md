@@ -167,9 +167,137 @@ This command:
   - `joint_indices`: List of joint indices to monitor
 - **Returns**: Dictionary mapping joint names to torque values (Nm)
 
+### Data Collection and CSV Format
+
+#### CSV File Structure
+The data is saved in CSV format with the following columns and their sources:
+
+1. **Time and Position Data**:
+   | Column | Source | Description |
+   |--------|--------|-------------|
+   | timestamp | `time.time()` | Unix timestamp when data point was collected |
+   | target_x | `target_x` from trajectory | Target X position from generated trajectory |
+   | target_z | `target_z` from trajectory | Target Z position from generated trajectory |
+   | actual_x | `actual_pos[0]` from `p.getLinkState()` | Actual X position of end effector |
+   | actual_z | `actual_pos[2]` from `p.getLinkState()` | Actual Z position of end effector |
+
+2. **Joint States** (from `p.getJointState(robot_id, joint_index)`):
+   | Column | Source | Description |
+   |--------|--------|-------------|
+   | joint1_angle | `state[0]` | Position of joint 1 (rad) |
+   | joint2_angle | `state[0]` | Position of joint 2 (rad) |
+   | joint3_angle | `state[0]` | Position of joint 3 (rad) |
+   | joint1_velocity | `state[1]` | Velocity of joint 1 (rad/s) |
+   | joint2_velocity | `state[1]` | Velocity of joint 2 (rad/s) |
+   | joint3_velocity | `state[1]` | Velocity of joint 3 (rad/s) |
+   | joint1_acceleration | Calculated | Filtered acceleration of joint 1 (rad/s²) |
+   | joint2_acceleration | Calculated | Filtered acceleration of joint 2 (rad/s²) |
+   | joint3_acceleration | Calculated | Filtered acceleration of joint 3 (rad/s²) |
+   | joint1_torque | `state[3]` | Applied torque on joint 1 (N⋅m) |
+   | joint2_torque | `state[3]` | Applied torque on joint 2 (N⋅m) |
+   | joint3_torque | `state[3]` | Applied torque on joint 3 (N⋅m) |
+
+3. **Control Parameters**:
+   | Column | Source | Description |
+   |--------|--------|-------------|
+   | kp | `visualizer.get_gains()` | Position gain from slider |
+   | kd | `visualizer.get_gains()` | Velocity gain from slider |
+   | radius | `visualizer.get_trajectory_params()` | Trajectory radius (m) |
+   | center_x | `visualizer.get_trajectory_params()` | X coordinate of trajectory center (m) |
+   | center_z | `visualizer.get_trajectory_params()` | Z coordinate of trajectory center (m) |
+
+#### Data Collection Details
+
+1. **Joint State Data**:
+   ```python
+   joint_states = p.getJointState(robot_id, joint_index)
+   # Returns tuple containing:
+   # [0] -> joint angle (rad)
+   # [1] -> joint velocity (rad/s)
+   # [2] -> joint reaction forces (ignored)
+   # [3] -> applied motor torque (N⋅m)
+   ```
+
+2. **Acceleration Calculation**:
+   ```python
+   # Moving average filter on velocities (window size = 5)
+   smoothed_vel_current = np.mean(velocity_history[-2:])
+   smoothed_vel_prev = np.mean(velocity_history[:-1])
+   
+   # Calculate acceleration with low-pass filter
+   acceleration = (smoothed_vel_current - smoothed_vel_prev) / dt
+   filtered_acc = 0.2 * acceleration + 0.8 * prev_acceleration
+   
+   # Clip to prevent extreme values
+   filtered_acc = np.clip(filtered_acc, -5.0, 5.0)  # ±5 rad/s²
+   ```
+
+3. **Torque Behavior**:
+   - Negative torques indicate counterclockwise effort in joint frame
+   - Primary component counteracts gravity (always negative)
+   - Motion control component is smaller than gravity compensation
+   - Joint 2 (shoulder) shows largest negative torque due to load
+   - Joint 3 (elbow) shows moderate negative torque
+   - Joint 1 (base) shows smallest torque (horizontal plane)
+
+4. **Filename Format**:
+   ```
+   semi_circle_trajectory_kp{kp:.2f}_kd{kd:.1f}_r{radius:.2f}_x{center_x:.2f}_z{center_z:.2f}_semicircle{number}_{timestamp}.csv
+   ```
+   Example: `semi_circle_trajectory_kp0.10_kd0.4_r0.10_x0.25_z0.10_semicircle3_20250724_131550.csv`
+
+#### Data Collection Frequency
+- Simulation runs at 240Hz (dt = 1/240 second)
+- Data points collected every simulation step
+- Visualization updates every 5 steps
+- Tkinter events processed every 10 steps
+
 ## Control Strategy Details
 
-### Position Control Implementation
+### Control System Architecture
+
+#### Torque Behavior Analysis
+The robot exhibits predominantly negative torques during both clockwise (forward) and counterclockwise (return) motions due to several factors:
+
+1. **Gravitational Effect**:
+   - The robot operates in a vertical plane under gravity (9.81 m/s²)
+   - Joints must continuously generate torque to counteract gravitational pull
+   - This creates a persistent negative torque bias regardless of motion direction
+
+2. **Joint-wise Torque Distribution**:
+   | Joint | Torque Characteristics | Reason |
+   |-------|----------------------|---------|
+   | Joint 1 (Base) | Smallest magnitude | Rotates in horizontal plane, minimal gravity effect |
+   | Joint 2 (Shoulder) | Largest negative | Supports weight of links 3, 4, and end-effector |
+   | Joint 3 (Elbow) | Moderate negative | Supports weight of link 4 and end-effector |
+
+3. **Direction Convention**:
+   - Negative torque indicates counterclockwise effort in joint frame
+   - Primary torque component counteracts gravitational pull
+   - Motion-related torque components are smaller than gravity compensation
+
+4. **Motion Phase Analysis**:
+   ```
+   Forward Motion (Clockwise):
+   - Negative torque to support links against gravity
+   - Additional negative torque for motion control
+   
+   Return Motion (Counterclockwise):
+   - Negative torque still needed for gravity compensation
+   - Gravity compensation dominates over motion control torques
+   ```
+
+5. **Torque Components**:
+   ```
+   Total Torque = Gravity Compensation + Motion Control
+   where:
+   - Gravity Compensation: Always negative (counterclockwise in joint frame)
+   - Motion Control: Can be positive or negative but smaller magnitude
+   ```
+
+This behavior is normal and expected for a vertically-operating robotic arm, where gravity compensation is the dominant factor in torque generation.
+
+#### PD Control Implementation
 
 The project uses PyBullet's built-in Position Control mode through `p.setJointMotorControl2()`. This is a PD (Proportional-Derivative) controller implemented internally by PyBullet.
 
