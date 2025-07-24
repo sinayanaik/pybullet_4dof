@@ -114,6 +114,203 @@ Data is saved in CSV format with the following columns:
 15. center_x
 16. center_z
 
+## CSV Data Collection and Format
+
+### CSV File Structure
+The data is saved in CSV format with 22 columns. Each row represents one timestep (1/240 second) of the simulation.
+
+#### Column Details
+
+1. **Timestamp [Column 0]**
+   - Type: Float
+   - Unit: Seconds (Unix timestamp)
+   - Source: `time.time()`
+   - Description: Time when data point was collected
+
+2. **Target Position [Columns 1-2]**
+   - `target_x` (Column 1)
+     - Type: Float
+     - Unit: Meters
+     - Source: Generated trajectory point
+     - Description: Desired X position of end-effector
+   - `target_z` (Column 2)
+     - Type: Float
+     - Unit: Meters
+     - Source: Generated trajectory point
+     - Description: Desired Z position of end-effector
+
+3. **Actual Position [Columns 3-4]**
+   - `actual_x` (Column 3)
+     - Type: Float
+     - Unit: Meters
+     - Source: `p.getLinkState(robot_id, ee_link_index)[0][0]`
+     - Description: Actual X position of end-effector
+   - `actual_z` (Column 4)
+     - Type: Float
+     - Unit: Meters
+     - Source: `p.getLinkState(robot_id, ee_link_index)[0][2]`
+     - Description: Actual Z position of end-effector
+
+4. **Joint Angles [Columns 5-7]**
+   - `joint1_angle` (Column 5)
+     - Type: Float
+     - Unit: Radians
+     - Source: `p.getJointState(robot_id, joint_indices[0])[0]`
+     - Description: Angular position of base joint
+   - `joint2_angle` (Column 6)
+     - Type: Float
+     - Unit: Radians
+     - Source: `p.getJointState(robot_id, joint_indices[1])[0]`
+     - Description: Angular position of shoulder joint
+   - `joint3_angle` (Column 7)
+     - Type: Float
+     - Unit: Radians
+     - Source: `p.getJointState(robot_id, joint_indices[2])[0]`
+     - Description: Angular position of elbow joint
+
+5. **Joint Velocities [Columns 8-10]**
+   - `joint1_velocity` (Column 8)
+     - Type: Float
+     - Unit: Radians/second
+     - Source: `p.getJointState(robot_id, joint_indices[0])[1]`
+     - Description: Angular velocity of base joint
+   - `joint2_velocity` (Column 9)
+     - Type: Float
+     - Unit: Radians/second
+     - Source: `p.getJointState(robot_id, joint_indices[1])[1]`
+     - Description: Angular velocity of shoulder joint
+   - `joint3_velocity` (Column 10)
+     - Type: Float
+     - Unit: Radians/second
+     - Source: `p.getJointState(robot_id, joint_indices[2])[1]`
+     - Description: Angular velocity of elbow joint
+
+6. **Joint Accelerations [Columns 11-13]**
+   - `joint1_acceleration` (Column 11)
+     - Type: Float
+     - Unit: Radians/second²
+     - Source: Calculated using filtered velocity data
+     - Description: Angular acceleration of base joint
+   - `joint2_acceleration` (Column 12)
+     - Type: Float
+     - Unit: Radians/second²
+     - Source: Calculated using filtered velocity data
+     - Description: Angular acceleration of shoulder joint
+   - `joint3_acceleration` (Column 13)
+     - Type: Float
+     - Unit: Radians/second²
+     - Source: Calculated using filtered velocity data
+     - Description: Angular acceleration of elbow joint
+   - Calculation Method:
+     ```python
+     # Moving average filter (window size = 5)
+     smoothed_vel_current = np.mean(velocity_history[-2:])
+     smoothed_vel_prev = np.mean(velocity_history[:-1])
+     
+     # Calculate and filter acceleration
+     raw_acc = (smoothed_vel_current - smoothed_vel_prev) / dt
+     filtered_acc = 0.2 * raw_acc + 0.8 * prev_acceleration
+     clipped_acc = np.clip(filtered_acc, -5.0, 5.0)
+     ```
+
+7. **Joint Torques [Columns 14-16]**
+   - `joint1_torque` (Column 14)
+     - Type: Float
+     - Unit: Newton-meters (N⋅m)
+     - Source: `p.getJointState(robot_id, joint_indices[0])[3]`
+     - Description: Applied torque on base joint
+   - `joint2_torque` (Column 15)
+     - Type: Float
+     - Unit: Newton-meters (N⋅m)
+     - Source: `p.getJointState(robot_id, joint_indices[1])[3]`
+     - Description: Applied torque on shoulder joint
+   - `joint3_torque` (Column 16)
+     - Type: Float
+     - Unit: Newton-meters (N⋅m)
+     - Source: `p.getJointState(robot_id, joint_indices[2])[3]`
+     - Description: Applied torque on elbow joint
+   - Note: Negative torques indicate counterclockwise effort in joint frame
+
+8. **Control Parameters [Columns 17-21]**
+   - `kp` (Column 17)
+     - Type: Float
+     - Unit: Dimensionless
+     - Source: GUI slider value
+     - Range: 0.01 to 1.0
+     - Description: Position gain for PD controller
+   - `kd` (Column 18)
+     - Type: Float
+     - Unit: Dimensionless
+     - Source: GUI slider value
+     - Range: 0.1 to 2.0
+     - Description: Velocity gain for PD controller
+   - `radius` (Column 19)
+     - Type: Float
+     - Unit: Meters
+     - Source: GUI slider value
+     - Range: 0.05 to 0.15
+     - Description: Radius of semi-circular trajectory
+   - `center_x` (Column 20)
+     - Type: Float
+     - Unit: Meters
+     - Source: GUI slider value
+     - Range: 0.1 to 0.4
+     - Description: X coordinate of trajectory center
+   - `center_z` (Column 21)
+     - Type: Float
+     - Unit: Meters
+     - Source: GUI slider value
+     - Range: 0.1 to 0.4
+     - Description: Z coordinate of trajectory center
+
+### Data Collection Frequency
+- Simulation timestep: 1/240 second (240Hz)
+- Data collection: Every simulation step
+- Data points per semi-circle: 1000 (500 forward + 500 return)
+- Visualization update: Every 5 steps (48Hz)
+- GUI update: Every 10 steps (24Hz)
+
+### File Naming Convention
+```
+semi_circle_trajectory_kp{kp:.2f}_kd{kd:.1f}_r{radius:.2f}_x{center_x:.2f}_z{center_z:.2f}_semicircle{number}_{timestamp}.csv
+```
+
+Example:
+```
+semi_circle_trajectory_kp0.10_kd0.4_r0.10_x0.25_z0.10_semicircle3_20250724_131550.csv
+```
+
+### Data Analysis Tips
+1. **Position Error Calculation**:
+   ```python
+   position_error = np.sqrt(
+       (df['target_x'] - df['actual_x'])**2 +
+       (df['target_z'] - df['actual_z'])**2
+   )
+   ```
+
+2. **Velocity Smoothing**:
+   ```python
+   window_size = 5
+   smoothed_velocity = pd.DataFrame({
+       'joint1': df['joint1_velocity'].rolling(window_size).mean(),
+       'joint2': df['joint2_velocity'].rolling(window_size).mean(),
+       'joint3': df['joint3_velocity'].rolling(window_size).mean()
+   })
+   ```
+
+3. **Torque Analysis**:
+   - Base joint (joint1): Smallest magnitude (horizontal plane)
+   - Shoulder joint (joint2): Largest negative (supports most weight)
+   - Elbow joint (joint3): Moderate negative (supports end-effector)
+
+4. **Forward/Return Split**:
+   ```python
+   mid_point = len(df) // 2
+   forward_motion = df.iloc[:mid_point]
+   return_motion = df.iloc[mid_point:]
+   ```
+
 ## Physical Setup
 ![Base Structure](../images/base.png)
 *Robot base and mounting structure*
