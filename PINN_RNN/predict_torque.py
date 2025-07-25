@@ -2,13 +2,13 @@ import torch
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from train_model import PINN, RobotDataset, MODELS_DIR, DATA_FILE
+from train_model import PINN_RNN, RobotDataset, MODELS_DIR, DATA_FILE
 from torch.utils.data import random_split
 import os
 
 def load_latest_model():
     # Find the latest model directory
-    model_dirs = [d for d in os.listdir(MODELS_DIR) if d.startswith('pinn_model_')]
+    model_dirs = [d for d in os.listdir(MODELS_DIR) if d.startswith('pinn_rnn_model_')]
     if not model_dirs:
         raise FileNotFoundError("No trained model found!")
     
@@ -18,7 +18,7 @@ def load_latest_model():
     
     # Load model
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = PINN().to(device)
+    model = PINN_RNN().to(device)
     model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
     model.eval()
     
@@ -65,32 +65,49 @@ def main():
     results_dir = os.path.join(MODELS_DIR, model_dir)
     print(f"Saving results to: {results_dir}")
     
-    # Load full dataset and split into train/test
-    full_dataset = RobotDataset(DATA_FILE)
-    train_size = int(0.8 * len(full_dataset))
-    test_size = len(full_dataset) - train_size
-    _, test_dataset = random_split(full_dataset, [train_size, test_size])
-    test_indices = test_dataset.indices
-    print(f"Total dataset size: {len(full_dataset)}")
-    print(f"Test set size: {len(test_dataset)}")
+    # Load data
+    data = pd.read_csv(DATA_FILE)
     
-    # Make predictions on entire dataset
+    # Convert data to tensors
+    angles = torch.tensor(data[['joint1_angle', 'joint2_angle', 'joint3_angle']].values, dtype=torch.float32)
+    velocities = torch.tensor(data[['joint1_velocity', 'joint2_velocity', 'joint3_velocity']].values, dtype=torch.float32)
+    accelerations = torch.tensor(data[['joint1_acceleration', 'joint2_acceleration', 'joint3_acceleration']].values, dtype=torch.float32)
+    true_torques = torch.tensor(data[['joint1_torque', 'joint2_torque', 'joint3_torque']].values, dtype=torch.float32)
+    
+    # Create sequences for RNN
+    sequence_length = 50
+    num_sequences = len(angles) - sequence_length + 1
+    
+    # Initialize arrays for predictions
+    all_pred_torques = np.zeros_like(true_torques.numpy())
+    counts = np.zeros(len(true_torques))  # To average overlapping predictions
+    
+    # Make predictions
     model.eval()
     with torch.no_grad():
-        # Get predictions for all data
-        all_angles = full_dataset.angles.to(device)
-        all_velocities = full_dataset.velocities.to(device)
-        all_accelerations = full_dataset.accelerations.to(device)
-        all_true_torques = full_dataset.torques.numpy()
-        
-        all_pred_torques = model(all_angles, all_velocities, all_accelerations)
-        all_pred_torques = all_pred_torques.cpu().numpy()
-        
-        # Extract test set predictions for metrics
-        test_true_torques = all_true_torques[test_indices]
-        test_pred_torques = all_pred_torques[test_indices]
+        for i in range(num_sequences):
+            # Get sequence
+            seq_angles = angles[i:i+sequence_length].unsqueeze(0).to(device)
+            seq_velocities = velocities[i:i+sequence_length].unsqueeze(0).to(device)
+            seq_accelerations = accelerations[i:i+sequence_length].unsqueeze(0).to(device)
+            
+            # Get predictions
+            pred_sequence = model(seq_angles, seq_velocities, seq_accelerations)
+            pred_sequence = pred_sequence.cpu().numpy().squeeze()
+            
+            # Add predictions to the arrays
+            all_pred_torques[i:i+sequence_length] += pred_sequence
+            counts[i:i+sequence_length] += 1
     
-    # Calculate metrics on test set
+    # Average the predictions where there were overlapping sequences
+    all_pred_torques = all_pred_torques / counts[:, np.newaxis]
+    true_torques = true_torques.numpy()
+    
+    # Calculate metrics (using the last 20% as test set)
+    test_start_idx = int(0.8 * len(true_torques))
+    test_true_torques = true_torques[test_start_idx:]
+    test_pred_torques = all_pred_torques[test_start_idx:]
+    
     mse = np.mean((test_true_torques - test_pred_torques)**2, axis=0)
     rmse = np.sqrt(mse)
     mae = np.mean(np.abs(test_true_torques - test_pred_torques), axis=0)
@@ -126,9 +143,9 @@ def main():
         f.write(f"Joint 2: {mae[1]:.4f} N⋅m\n")
         f.write(f"Joint 3: {mae[2]:.4f} N⋅m\n")
     
-    # Plot and save predictions for all data
+    # Plot and save predictions
     plot_path = os.path.join(results_dir, 'predictions.png')
-    plot_predictions(all_true_torques, all_pred_torques, plot_path)
+    plot_predictions(true_torques, all_pred_torques, plot_path)
 
 if __name__ == '__main__':
     main() 
