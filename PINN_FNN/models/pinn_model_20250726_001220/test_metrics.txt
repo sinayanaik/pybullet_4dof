@@ -1,0 +1,10 @@
+Test Set Metrics:
+Root Mean Square Error (RMSE):
+Joint 1: 2.7943 N⋅m
+Joint 2: 0.9529 N⋅m
+Joint 3: 0.1793 N⋅m
+
+Mean Absolute Error (MAE):
+Joint 1: 2.7420 N⋅m
+Joint 2: 0.8573 N⋅m
+Joint 3: 0.1601 N⋅m
