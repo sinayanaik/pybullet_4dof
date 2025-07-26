@@ -1,0 +1,24 @@
+Data-Driven Model MSE per joint:
+Joint 1: 0.027763 (N⋅m)²
+Joint 2: 0.019074 (N⋅m)²
+Joint 3: 0.002633 (N⋅m)²
+
+Data-Driven Average MSE: 0.016490 (N⋅m)²
+
+PINN Model MSE per joint:
+Joint 1: 0.704048 (N⋅m)²
+Joint 2: 0.072036 (N⋅m)²
+Joint 3: 0.003830 (N⋅m)²
+
+PINN Average MSE: 0.259971 (N⋅m)²
+
+Hyperparameters:
+hidden_size: 64
+num_layers: 3
+learning_rate: 0.001
+batch_size: 32
+epochs: 100
+train_split: 0.8
+data_weight: 0.9
+physics_weight: 0.1
+data_file: /home/san/Public/pybullet_4dof/data/semi_circle_trajectory_kp0.10_kd0.4_r0.10_x0.25_z0.10_semicircle3_20250724_140439.csv
