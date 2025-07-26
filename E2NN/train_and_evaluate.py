@@ -3,11 +3,14 @@ import torch.nn as nn
 import numpy as np
 import pandas as pd
 from torch.utils.data import Dataset, DataLoader
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 import matplotlib.pyplot as plt
 from datetime import datetime
 import os
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
+import json
+from sklearn.metrics import mean_squared_error
 
 # Get absolute paths
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -166,10 +169,16 @@ class E2NN(nn.Module):
     
     def compute_analytical_inertia(self, q):
         """Compute the analytical inertia matrix"""
+        # Handle input dimensions
+        if len(q.shape) == 3:  # If input is [batch, seq, features]
+            q = q[:, -1, :]  # Take last timestep
         batch_size = q.shape[0]
+        
+        # Initialize inertia matrix [batch_size, 3, 3]
         M = torch.zeros(batch_size, 3, 3, device=q.device)
         
         # Diagonal terms
+        # M11
         M[:, 0, 0] = I1 + I2 + I3 + \
                      m1 * (L1/2)**2 + \
                      m2 * (L1**2 + (L2/2)**2 + 2 * L1 * L2/2 * torch.cos(q[:, 1])) + \
@@ -178,33 +187,49 @@ class E2NN(nn.Module):
                           2 * L1 * L3/2 * torch.cos(q[:, 1] + q[:, 2]) + \
                           2 * L2 * L3/2 * torch.cos(q[:, 2]))
         
+        # M22
         M[:, 1, 1] = I2 + I3 + \
                      m2 * (L2/2)**2 + \
                      m3 * (L2**2 + (L3/2)**2 + 2 * L2 * L3/2 * torch.cos(q[:, 2]))
         
+        # M33
         M[:, 2, 2] = I3 + m3 * (L3/2)**2
         
         # Off-diagonal terms (symmetric)
-        M[:, 0, 1] = M[:, 1, 0] = m2 * L1 * L2/2 * torch.cos(q[:, 1]) + \
-                                 m3 * (L1 * L2 * torch.cos(q[:, 1]) + \
-                                      L1 * L3/2 * torch.cos(q[:, 1] + q[:, 2]))
+        # M12 = M21
+        M12 = m2 * L1 * L2/2 * torch.cos(q[:, 1]) + \
+              m3 * (L1 * L2 * torch.cos(q[:, 1]) + \
+                    L1 * L3/2 * torch.cos(q[:, 1] + q[:, 2]))
+        M[:, 0, 1] = M12
+        M[:, 1, 0] = M12
         
-        M[:, 0, 2] = M[:, 2, 0] = m3 * L1 * L3/2 * torch.cos(q[:, 1] + q[:, 2])
+        # M13 = M31
+        M13 = m3 * L1 * L3/2 * torch.cos(q[:, 1] + q[:, 2])
+        M[:, 0, 2] = M13
+        M[:, 2, 0] = M13
         
-        M[:, 1, 2] = M[:, 2, 1] = m3 * L2 * L3/2 * torch.cos(q[:, 2])
+        # M23 = M32
+        M23 = m3 * L2 * L3/2 * torch.cos(q[:, 2])
+        M[:, 1, 2] = M23
+        M[:, 2, 1] = M23
         
         return M
     
     def compute_analytical_coriolis(self, q, qdot):
         """Compute the analytical Coriolis matrix"""
+        # Handle input dimensions
+        if len(q.shape) == 3:  # If input is [batch, seq, features]
+            q = q[:, -1, :]
+            qdot = qdot[:, -1, :]
         batch_size = q.shape[0]
+        
+        # Initialize Coriolis matrix [batch_size, 3, 3]
         C = torch.zeros(batch_size, 3, 3, device=q.device)
         
         # Compute Christoffel symbols and multiply with velocities
-        # This is a simplified version - in practice, you'd compute all terms
         h = m2 * L1 * L2/2 * torch.sin(q[:, 1]) + \
             m3 * (L1 * L2 * torch.sin(q[:, 1]) + \
-                 L1 * L3/2 * torch.sin(q[:, 1] + q[:, 2]))
+                  L1 * L3/2 * torch.sin(q[:, 1] + q[:, 2]))
         
         C[:, 0, 1] = -h * qdot[:, 1]
         C[:, 1, 0] = h * qdot[:, 0]
@@ -213,6 +238,11 @@ class E2NN(nn.Module):
     
     def compute_analytical_gravity(self, q):
         """Compute the analytical gravity vector"""
+        # Handle input dimensions
+        if len(q.shape) == 3:  # If input is [batch, seq, features]
+            q = q[:, -1, :]
+        
+        # Initialize gravity vector [batch_size, 3]
         g_vec = torch.zeros(q.shape[0], 3, device=q.device)
         
         # Compute gravitational torques
@@ -233,22 +263,143 @@ class E2NN(nn.Module):
         C_analytical = self.compute_analytical_coriolis(q, qdot)
         G_analytical = self.compute_analytical_gravity(q)
         
+        # Handle input dimensions for residual networks
+        if len(q.shape) == 3:  # If input is [batch, seq, features]
+            q_input = q[:, -1, :]
+            qdot_input = qdot[:, -1, :]
+        else:
+            q_input = q
+            qdot_input = qdot
+        
         # Compute residual terms
-        M_residual = self.inertial_net(q)
-        C_residual = self.coriolis_net(q, qdot)
-        G_residual = self.gravity_net(q)
+        M_residual = self.inertial_net(q_input).reshape(-1, 3, 3)
+        C_residual = self.coriolis_net(q_input, qdot_input).reshape(-1, 3, 3)
+        G_residual = self.gravity_net(q_input)
         
         # Combine analytical and learned terms with learnable scaling
         M = M_analytical + torch.sigmoid(self.inertial_scale) * M_residual
         C = C_analytical + torch.sigmoid(self.coriolis_scale) * C_residual
         G = G_analytical + torch.sigmoid(self.gravity_scale) * G_residual
         
+        # Handle input dimensions for acceleration
+        if len(qddot.shape) == 3:  # If input is [batch, seq, features]
+            qddot = qddot[:, -1, :]
+        
         # Compute torques using the equation of motion
         term1 = torch.bmm(M, qddot.unsqueeze(2)).squeeze(2)
-        term2 = torch.bmm(C, qdot.unsqueeze(2)).squeeze(2)
+        term2 = torch.bmm(C, qdot_input.unsqueeze(2)).squeeze(2)
         tau = term1 + term2 + G
         
         return tau
+
+class VanillaFNN(nn.Module):
+    def __init__(self, hidden_size=64):
+        super().__init__()
+        # Architecture matching /FNN/train_torque_model.py
+        self.net = nn.Sequential(
+            nn.Linear(9, hidden_size),
+            nn.BatchNorm1d(hidden_size),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(hidden_size, hidden_size),
+            nn.BatchNorm1d(hidden_size),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(hidden_size, hidden_size // 2),
+            nn.BatchNorm1d(hidden_size // 2),
+            nn.ReLU(),
+            nn.Linear(hidden_size // 2, 3)
+        )
+        
+        # Initialize weights using Kaiming initialization
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+            elif isinstance(m, nn.BatchNorm1d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+    
+    def forward(self, q, qdot, qddot):
+        # Combine inputs and reshape for batch norm
+        x = torch.cat([q, qdot, qddot], dim=-1)
+        if len(x.shape) == 3:  # If sequence data, take last timestep
+            x = x[:, -1, :]
+        return self.net(x)
+
+class VanillaRNN(nn.Module):
+    def __init__(self, hidden_size=64, sequence_length=10):
+        super().__init__()
+        self.sequence_length = sequence_length
+        self.hidden_size = hidden_size
+        
+        # Input preprocessing (from /RNN/train_torque_model.py)
+        self.input_net = nn.Sequential(
+            nn.Linear(9, hidden_size),
+            nn.BatchNorm1d(hidden_size),
+            nn.ReLU(),
+            nn.Dropout(0.2)
+        )
+        
+        # LSTM layer
+        self.lstm = nn.LSTM(
+            input_size=hidden_size,
+            hidden_size=hidden_size,
+            num_layers=1,
+            batch_first=True
+        )
+        
+        # Output network
+        self.output_net = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size // 2),
+            nn.BatchNorm1d(hidden_size // 2),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(hidden_size // 2, 3)
+        )
+        
+        self._init_weights()
+    
+    def _init_weights(self):
+        # Initialize input and output networks
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+            elif isinstance(m, nn.BatchNorm1d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+        
+        # Initialize LSTM
+        for name, param in self.lstm.named_parameters():
+            if 'weight_ih' in name:
+                nn.init.kaiming_normal_(param)
+            elif 'weight_hh' in name:
+                nn.init.orthogonal_(param)
+            elif 'bias' in name:
+                nn.init.zeros_(param)
+    
+    def forward(self, q, qdot, qddot):
+        batch_size = q.shape[0]
+        
+        # Combine inputs: [batch_size, seq_len, 9]
+        x = torch.cat([q, qdot, qddot], dim=-1)
+        
+        # Process each timestep through input network
+        x_reshaped = x.reshape(-1, x.shape[-1])  # [batch_size * seq_len, 9]
+        features = self.input_net(x_reshaped)
+        features = features.reshape(batch_size, -1, self.hidden_size)
+        
+        # LSTM forward pass
+        h0 = torch.zeros(1, batch_size, self.hidden_size, device=x.device)
+        c0 = torch.zeros(1, batch_size, self.hidden_size, device=x.device)
+        lstm_out, _ = self.lstm(features, (h0, c0))
+        
+        # Process final output
+        final_out = lstm_out[:, -1, :]  # [batch_size, hidden_size]
+        return self.output_net(final_out)
 
 class HyperparameterGUI:
     def __init__(self):
@@ -380,12 +531,12 @@ def train_model(model, train_loader, test_loader, optimizer, criterion, params):
     train_losses = []
     test_losses = []
     best_test_loss = float('inf')
-    patience = 20  # Early stopping patience
-    no_improve = 0
+    best_state = None
     
-    # Learning rate scheduler
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='min', factor=0.5, patience=10, verbose=True
+    # Learning rate scheduler matching original implementations
+    scheduler = ReduceLROnPlateau(
+        optimizer, mode='min', factor=0.2, patience=5, verbose=True,
+        min_lr=1e-6, cooldown=5
     )
     
     for epoch in range(params['epochs']):
@@ -396,33 +547,22 @@ def train_model(model, train_loader, test_loader, optimizer, criterion, params):
         for X, y in train_loader:
             optimizer.zero_grad()
             
-            # Split X into q, qdot, qddot
+            # Split features
             batch_size, seq_len = X.shape[0], X.shape[1]
-            q = X[:, :, :3].reshape(batch_size, seq_len, 3)
-            qdot = X[:, :, 3:6].reshape(batch_size, seq_len, 3)
-            qddot = X[:, :, 6:].reshape(batch_size, seq_len, 3)
+            q = X[:, :, :3]
+            qdot = X[:, :, 3:6]
+            qddot = X[:, :, 6:]
             
-            # Forward pass using last timestep
-            y_pred = model(q[:, -1, :], qdot[:, -1, :], qddot[:, -1, :])
+            # Forward pass
+            y_pred = model(q, qdot, qddot)
             
-            # Compute loss with L2 regularization
-            l2_lambda = 0.001  # L2 regularization strength
-            l2_reg = torch.tensor(0., device=y.device)
-            for param in model.parameters():
-                l2_reg += torch.norm(param)
-            
-            loss = criterion(y_pred, y) + l2_lambda * l2_reg
-            
-            # Add smoothness penalty
-            if batch_size > 1:
-                smoothness_lambda = 0.01
-                smoothness_loss = torch.mean(torch.abs(y_pred[1:] - y_pred[:-1]))
-                loss += smoothness_lambda * smoothness_loss
+            # Basic MSE loss without additional regularization
+            loss = criterion(y_pred, y)
             
             loss.backward()
             
-            # Gradient clipping
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            # Gradient clipping (value clipping for better stability)
+            torch.nn.utils.clip_grad_value_(model.parameters(), 1.0)
             
             optimizer.step()
             train_loss += loss.item()
@@ -436,11 +576,11 @@ def train_model(model, train_loader, test_loader, optimizer, criterion, params):
         with torch.no_grad():
             for X, y in test_loader:
                 batch_size, seq_len = X.shape[0], X.shape[1]
-                q = X[:, :, :3].reshape(batch_size, seq_len, 3)
-                qdot = X[:, :, 3:6].reshape(batch_size, seq_len, 3)
-                qddot = X[:, :, 6:].reshape(batch_size, seq_len, 3)
+                q = X[:, :, :3]
+                qdot = X[:, :, 3:6]
+                qddot = X[:, :, 6:]
                 
-                y_pred = model(q[:, -1, :], qdot[:, -1, :], qddot[:, -1, :])
+                y_pred = model(q, qdot, qddot)
                 test_loss += criterion(y_pred, y).item()
         
         test_loss /= len(test_loader)
@@ -453,120 +593,178 @@ def train_model(model, train_loader, test_loader, optimizer, criterion, params):
             print(f"Epoch {epoch+1}/{params['epochs']}, "
                   f"Train Loss: {train_loss:.6f}, Test Loss: {test_loss:.6f}")
         
-        # Early stopping
+        # Save best model state
         if test_loss < best_test_loss:
             best_test_loss = test_loss
             best_state = model.state_dict()
-            no_improve = 0
-        else:
-            no_improve += 1
-            if no_improve >= patience:
-                print(f"Early stopping triggered after {epoch + 1} epochs")
-                break
     
     return best_state, train_losses, test_losses
 
 def evaluate_model(model, dataset):
     model.eval()
-    all_predictions = []
-    all_targets = []
+    device = next(model.parameters()).device
+    
+    # For RNN, we need to handle the sequence length
+    if isinstance(model, VanillaRNN):
+        sequence_length = model.sequence_length
+        # Adjust predictions array length
+        num_predictions = len(dataset) - sequence_length + 1
+    else:
+        num_predictions = len(dataset)
+    
+    predictions = np.zeros((num_predictions, 3))
+    targets = np.zeros((num_predictions, 3))
     
     with torch.no_grad():
-        for i in range(len(dataset)):
-            X, y = dataset[i]
-            X = X.unsqueeze(0)
-            
-            batch_size, seq_len = X.shape[0], X.shape[1]
-            q = X[:, :, :3].reshape(batch_size, seq_len, 3)
-            qdot = X[:, :, 3:6].reshape(batch_size, seq_len, 3)
-            qddot = X[:, :, 6:].reshape(batch_size, seq_len, 3)
-            
-            pred = model(q[:, -1, :], qdot[:, -1, :], qddot[:, -1, :])
-            all_predictions.append(pred.numpy())
-            all_targets.append(y.numpy())
+        for i in range(num_predictions):
+            if isinstance(model, VanillaRNN):
+                # Get sequence data
+                X, y = dataset[i]
+                X = X.unsqueeze(0).to(device)
+                
+                # Split features
+                q = X[:, :, :3]
+                qdot = X[:, :, 3:6]
+                qddot = X[:, :, 6:]
+                
+                # Forward pass
+                pred = model(q, qdot, qddot)
+                predictions[i] = pred.cpu().numpy()
+                targets[i] = y.numpy()
+            else:
+                # Handle FNN and E2NN
+                X, y = dataset[i]
+                X = X.unsqueeze(0).to(device)
+                
+                q = X[:, -1:, :3]
+                qdot = X[:, -1:, 3:6]
+                qddot = X[:, -1:, 6:]
+                
+                pred = model(q[:, 0], qdot[:, 0], qddot[:, 0])
+                predictions[i] = pred.cpu().numpy()
+                targets[i] = y.numpy()
     
-    predictions = np.concatenate(all_predictions)
-    targets = np.concatenate(all_targets).reshape(-1, 3)
+    # Calculate MSE for each joint
+    mse_per_joint = np.mean((predictions - targets)**2, axis=0)
+    avg_mse = np.mean(mse_per_joint)
     
-    return predictions, targets
+    return predictions, avg_mse
 
 def train_and_evaluate(params):
-    # Create output directory
+    # Create output directory with parameters in name
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    base_dir = os.path.join(MODELS_DIR, f"e2nn_h{params['hidden_size']}_s{params['sequence_length']}_{timestamp}")
-    os.makedirs(base_dir, exist_ok=True)
+    model_dir = os.path.join(SCRIPT_DIR, f"Trained_models_h{params['hidden_size']}_s{params['sequence_length']}_{timestamp}")
+    os.makedirs(model_dir, exist_ok=True)
     
-    # Load and split data
+    # Save hyperparameters
+    with open(os.path.join(model_dir, 'hyperparameters.json'), 'w') as f:
+        json.dump(params, f, indent=4)
+    
+    # Load and split dataset
     dataset = RobotDataset(params['data_file'], forward_only=True, sequence_length=params['sequence_length'])
-    train_size = int(params['train_split'] * len(dataset))
+    train_size = int(0.8 * len(dataset))
     test_size = len(dataset) - train_size
     train_dataset, test_dataset = torch.utils.data.random_split(dataset, [train_size, test_size])
     
     train_loader = DataLoader(train_dataset, batch_size=params['batch_size'], shuffle=True)
-    test_loader = DataLoader(test_dataset, batch_size=params['batch_size'])
+    test_loader = DataLoader(test_dataset, batch_size=params['batch_size'], shuffle=False)
     
-    # Initialize model and optimizer
-    model = E2NN(hidden_size=params['hidden_size'])
-    optimizer = torch.optim.Adam(model.parameters(), lr=params['learning_rate'])
-    criterion = nn.MSELoss()
+    # Initialize all models with same hyperparameters
+    models = {
+        'E2NN': E2NN(hidden_size=params['hidden_size']),
+        'VanillaFNN': VanillaFNN(hidden_size=params['hidden_size']),
+        'VanillaRNN': VanillaRNN(hidden_size=params['hidden_size'], sequence_length=params['sequence_length'])
+    }
     
-    # Train model
-    print("\nTraining E2NN Model...")
-    best_state, train_losses, test_losses = train_model(
-        model, train_loader, test_loader, optimizer, criterion, params
-    )
+    # Train all models
+    training_histories = {}
+    test_losses = {}
+    predictions = {}
     
-    # Save model
-    torch.save(best_state, os.path.join(base_dir, "best_model.pth"))
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
-    # Generate predictions
-    model.load_state_dict(best_state)
-    predictions, targets = evaluate_model(model, dataset)
+    for model_name, model in models.items():
+        print(f"\nTraining {model_name}...")
+        model = model.to(device)
+        optimizer = torch.optim.Adam(model.parameters(), lr=params['learning_rate'])
+        criterion = nn.MSELoss()
+        
+        # Train model
+        best_state, train_losses, test_losses_history = train_model(model, train_loader, test_loader, optimizer, criterion, params)
+        training_histories[model_name] = {
+            'train_loss': train_losses,
+            'test_loss': test_losses_history
+        }
+        
+        # Save model
+        torch.save(best_state, os.path.join(model_dir, f'{model_name.lower()}_model.pth'))
+        
+        # Load best model for evaluation
+        model.load_state_dict(best_state)
+        model.eval()
+        
+        # Evaluate model
+        predictions[model_name], mse = evaluate_model(model, dataset)
+        test_losses[model_name] = mse
     
-    # Plot training history
-    plt.figure(figsize=(10, 5))
-    plt.plot(train_losses, label='Train Loss')
-    plt.plot(test_losses, label='Test Loss')
+    # Plot training histories
+    plt.figure(figsize=(12, 6))
+    for model_name, history in training_histories.items():
+        plt.plot(history['train_loss'], label=f'{model_name} Train')
+        plt.plot(history['test_loss'], label=f'{model_name} Test')
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
-    plt.title('Training History')
+    plt.title('Training History Comparison')
     plt.legend()
     plt.grid(True)
-    plt.savefig(os.path.join(base_dir, "training_history.png"))
+    plt.savefig(os.path.join(model_dir, 'training_history.png'))
     plt.close()
     
-    # Plot predictions
+    # Plot predictions comparison
     fig, axes = plt.subplots(3, 1, figsize=(15, 12))
-    time = np.arange(len(targets))
+    joint_names = ['Joint 1', 'Joint 2', 'Joint 3']
     
-    # Calculate MSE for each joint
-    mse = np.mean((targets - predictions)**2, axis=0)
+    # Get true torques for the actual prediction range
+    if isinstance(model, VanillaRNN):
+        true_torques = dataset.tau[model.sequence_length-1:].numpy()
+    else:
+        true_torques = dataset.tau.numpy()
     
     for i in range(3):
-        axes[i].plot(time, targets[:, i], color='blue', label='True Torque')
-        axes[i].plot(time, predictions[:, i], color='red', linestyle='--',
-                    label=f'E2NN (MSE: {mse[i]:.6f})')
+        axes[i].plot(true_torques[:, i], label='True Torque', color='black', linewidth=2)
         
-        axes[i].set_title(f'Joint {i+1} Torque')
+        for model_name, preds in predictions.items():
+            mse = np.mean((true_torques[:len(preds), i] - preds[:, i])**2)
+            axes[i].plot(preds[:, i], label=f'{model_name} (MSE: {mse:.6f})', alpha=0.7)
+        
+        axes[i].set_title(f'{joint_names[i]} Torque Predictions')
         axes[i].set_xlabel('Time Step')
-        axes[i].set_ylabel('Torque (N⋅m)')
-        axes[i].grid(True)
+        axes[i].set_ylabel('Torque (Nm)')
         axes[i].legend()
+        axes[i].grid(True)
     
     plt.tight_layout()
-    plt.savefig(os.path.join(base_dir, "predictions.png"))
+    plt.savefig(os.path.join(model_dir, 'predictions_comparison.png'))
     plt.close()
     
     # Save metrics
-    with open(os.path.join(base_dir, "metrics.txt"), 'w') as f:
-        f.write("E2NN Model MSE per joint:\n")
-        for i, joint_mse in enumerate(mse):
-            f.write(f"Joint {i+1}: {joint_mse:.6f} (N⋅m)²\n")
-        f.write(f"\nAverage MSE: {np.mean(mse):.6f} (N⋅m)²\n")
-        
-        f.write("\nHyperparameters:\n")
-        for param, value in params.items():
-            f.write(f"{param}: {value}\n")
+    metrics = {}
+    for model_name, preds in predictions.items():
+        metrics[model_name] = {
+            f'joint{i+1}_mse': float(np.mean((true_torques[:len(preds), i] - preds[:, i])**2))
+            for i in range(3)
+        }
+        metrics[model_name]['avg_mse'] = float(np.mean(list(metrics[model_name].values())))
+    
+    with open(os.path.join(model_dir, 'metrics.json'), 'w') as f:
+        json.dump(metrics, f, indent=4)
+    
+    print("\nTraining completed. Results saved in:", model_dir)
+    print("\nTest MSE values:")
+    for model_name, model_metrics in metrics.items():
+        print(f"\n{model_name}:")
+        for metric_name, value in model_metrics.items():
+            print(f"  {metric_name}: {value:.6f}")
 
 if __name__ == "__main__":
     # Launch GUI for hyperparameter selection
