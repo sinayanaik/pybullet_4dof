@@ -707,17 +707,63 @@ def train_and_evaluate(params):
         predictions[model_name], mse = evaluate_model(model, dataset)
         test_losses[model_name] = mse
     
+    # Define professional color scheme and styles
+    plt.style.use('seaborn-darkgrid')
+    styles = {
+        'True Torque': {
+            'color': 'black',
+            'linestyle': '-',
+            'linewidth': 2.5,
+            'alpha': 1.0,
+            'zorder': 4  # Put true torque on top
+        },
+        'E2NN': {
+            'color': '#FF4B4B',  # Bright red
+            'linestyle': '-',
+            'linewidth': 2.0,
+            'alpha': 0.9,
+            'zorder': 3
+        },
+        'VanillaFNN': {
+            'color': '#4B4BFF',  # Bright blue
+            'linestyle': '--',
+            'linewidth': 1.5,
+            'alpha': 0.8,
+            'zorder': 2
+        },
+        'VanillaRNN': {
+            'color': '#4BFF4B',  # Bright green
+            'linestyle': ':',
+            'linewidth': 2.0,
+            'alpha': 0.8,
+            'zorder': 1
+        }
+    }
+
     # Plot training histories
     plt.figure(figsize=(12, 6))
     for model_name, history in training_histories.items():
-        plt.plot(history['train_loss'], label=f'{model_name} Train')
-        plt.plot(history['test_loss'], label=f'{model_name} Test')
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    plt.title('Training History Comparison')
-    plt.legend()
-    plt.grid(True)
-    plt.savefig(os.path.join(model_dir, 'training_history.png'))
+        style = styles[model_name]
+        plt.plot(history['train_loss'], 
+                label=f'{model_name} Train',
+                color=style['color'],
+                linestyle=style['linestyle'],
+                linewidth=style['linewidth'],
+                alpha=style['alpha'])
+        plt.plot(history['test_loss'],
+                label=f'{model_name} Test',
+                color=style['color'],
+                linestyle=style['linestyle'],
+                linewidth=style['linewidth'],
+                alpha=style['alpha'] * 0.5)  # Lower alpha for test curves
+    
+    plt.xlabel('Epoch', fontsize=12, fontweight='bold')
+    plt.ylabel('Loss', fontsize=12, fontweight='bold')
+    plt.title('Training History Comparison', fontsize=14, fontweight='bold', pad=15)
+    plt.legend(fontsize=10, bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.grid(True, linestyle='--', alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(os.path.join(model_dir, 'training_history.png'), dpi=300, bbox_inches='tight')
     plt.close()
     
     # Plot predictions comparison
@@ -731,20 +777,58 @@ def train_and_evaluate(params):
         true_torques = dataset.tau.numpy()
     
     for i in range(3):
-        axes[i].plot(true_torques[:, i], label='True Torque', color='black', linewidth=2)
+        # Set background style
+        axes[i].set_facecolor('#F8F8F8')
+        axes[i].grid(True, linestyle='--', alpha=0.3, color='gray')
         
+        # Plot true torques
+        axes[i].plot(true_torques[:, i], 
+                    label='True Torque',
+                    **styles['True Torque'])
+        
+        # Plot predictions
         for model_name, preds in predictions.items():
+            if model_name == 'True Torque':
+                continue
+            style = styles[model_name]
             mse = np.mean((true_torques[:len(preds), i] - preds[:, i])**2)
-            axes[i].plot(preds[:, i], label=f'{model_name} (MSE: {mse:.6f})', alpha=0.7)
+            axes[i].plot(preds[:, i],
+                        label=f'{model_name} (MSE: {mse:.6f})',
+                        **style)
         
-        axes[i].set_title(f'{joint_names[i]} Torque Predictions')
-        axes[i].set_xlabel('Time Step')
-        axes[i].set_ylabel('Torque (Nm)')
-        axes[i].legend()
-        axes[i].grid(True)
+        # Enhance plot appearance
+        axes[i].set_title(f'{joint_names[i]} Torque Predictions', 
+                         fontsize=14, fontweight='bold', pad=10)
+        axes[i].set_xlabel('Time Step', fontsize=12, fontweight='bold')
+        axes[i].set_ylabel('Torque (Nm)', fontsize=12, fontweight='bold')
+        
+        # Enhance legend
+        legend = axes[i].legend(fontsize=10, 
+                              bbox_to_anchor=(1.05, 1), 
+                              loc='upper left',
+                              frameon=True,
+                              fancybox=True,
+                              shadow=True)
+        legend.get_frame().set_facecolor('white')
+        legend.get_frame().set_alpha(0.9)
+        
+        # Add minor gridlines for better readability
+        axes[i].minorticks_on()
+        axes[i].grid(True, which='minor', linestyle=':', alpha=0.2)
+        
+        # Set spines
+        for spine in axes[i].spines.values():
+            spine.set_linewidth(1.5)
     
+    # Adjust layout
     plt.tight_layout()
-    plt.savefig(os.path.join(model_dir, 'predictions_comparison.png'))
+    
+    # Save with high quality
+    plt.savefig(os.path.join(model_dir, 'predictions_comparison.png'), 
+                dpi=300,
+                bbox_inches='tight',
+                facecolor='white',
+                edgecolor='none')
     plt.close()
     
     # Save metrics
